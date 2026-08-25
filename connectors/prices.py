@@ -2,7 +2,7 @@ import time
 
 import requests
 
-from src.DEXes import Chain
+from graph.structures.DEXes import Chain
 
 from .chain_metadata import get_metadata
 from .exceptions import ConnectorAPIError

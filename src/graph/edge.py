@@ -1,19 +1,19 @@
 from enum import Enum
-from src.DEXes import DEX, Chain
+from graph.structures.DEXes import DEX, Chain
 from typing import Sequence
-from DEXes import Stable
+from graph.structures.DEXes import Stable
 from enum import Enum,auto
 from abc import ABC, abstractmethod
-from node import Node,NodeType
+from graph.node import Node,NodeType
 
 
 class Edge:
     def __init__(self,u: Node,v: Node):
-        self.u = u 
+        self.u = u
         self.v = v
         self.computeCost()
         self.computeDelay()
-    
+
     def computeCost(self) -> float:
         if (self.v.type == NodeType.Swap):
             print("FAHH")
@@ -32,7 +32,7 @@ class Edge:
             #fonction pour compute le délai cowswap sur la chain 
         elif (self.v.type == NodeType.Deposit):
             #Délai de bloc pour la transaction
-        
+
 
     
 

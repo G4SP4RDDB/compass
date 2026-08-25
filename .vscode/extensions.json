@@ -1,5 +1,7 @@
 {
     "recommendations": [
-        "anthropic.claude-code"
+        "anthropic.claude-code",
+        "ms-python.python",
+        "ms-python.vscode-pylance"
     ]
 }

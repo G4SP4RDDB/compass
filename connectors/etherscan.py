@@ -1,6 +1,6 @@
 import requests
 
-from src.DEXes import Chain
+from graph.structures.DEXes import Chain
 
 from .chain_metadata import get_metadata
 from .config import require_etherscan_api_key

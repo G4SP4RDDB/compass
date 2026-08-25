@@ -2,6 +2,10 @@ from typing import Sequence
 from enum import Enum,auto
 
 
+
+
+#Ou est ce que l'on recoit les targets ? => target reçue envoyées via Armand
+
 class DEX: 
     def __init__(self,supportedChains: Sequence[Chain],supportedStables: Sequence[Stable]):
         self.chains = supportedChains
@@ -12,7 +16,9 @@ class DEX:
 
     def update_target(self,newTarget: float) -> None:
         self.target = newTarget
-
+    def getBalance(self) ->float:
+        return self.inbalance
+    
     def getChains(self) -> Sequence[Chain]:
         return self.chains
     def getStables(self) -> Sequence[Stables]:

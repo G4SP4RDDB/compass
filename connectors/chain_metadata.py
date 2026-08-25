@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from src.DEXes import Chain
+from graph.structures.DEXes import Chain
 
 
 @dataclass(frozen=True)
