@@ -1,2 +1,5 @@
 requests
 python-dotenv
+networkx
+matplotlib
+ortools==9.15.6755

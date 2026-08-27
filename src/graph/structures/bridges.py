@@ -1,4 +1,4 @@
-from DEXes import Chain,Stable
+from graph.structures.DEXes import Chain, Stable
 
 class Bridge:
     def __init__(self,chainIn: Chain,chainOut:Chain,stable:Stable):

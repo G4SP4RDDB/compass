@@ -21,7 +21,7 @@ class DEX:
     
     def getChains(self) -> Sequence[Chain]:
         return self.chains
-    def getStables(self) -> Sequence[Stables]:
+    def getStables(self) -> Sequence[Stable]:
         return self.stables
 
 

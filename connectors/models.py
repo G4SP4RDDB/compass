@@ -19,3 +19,10 @@ class SwapQuote:
     buy_amount: int
     fee_amount: int
     valid_to: int
+
+
+@dataclass
+class PoolReserves:
+    chain: Chain
+    reserve_in: float
+    reserve_out: float
