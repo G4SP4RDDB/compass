@@ -22,7 +22,9 @@ class SwapQuote:
 
 
 @dataclass
-class PoolReserves:
+class UniswapQuote:
     chain: Chain
-    reserve_in: float
-    reserve_out: float
+    sell_token: str
+    buy_token: str
+    buy_amount: int
+    gas_estimate: int

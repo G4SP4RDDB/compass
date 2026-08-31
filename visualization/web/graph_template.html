@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Compass — Graph Viewer</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --panel-bg: #ffffff;
+    --text: #1a1d21;
+    --muted: #6b7280;
+    --border: #dde1e6;
+    --accent: #2563eb;
+    --pos: #2fae5e;
+    --neg: #e05252;
+    --zero: #8b93a1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --panel-bg: #1c1f24;
+      --text: #e8eaed;
+      --muted: #9aa0a8;
+      --border: #33383f;
+      --accent: #5b9bff;
+      --pos: #3ecb72;
+      --neg: #ff6b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  body { display: flex; flex-direction: column; }
+
+  header {
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap;
+    background: var(--panel-bg);
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  #stats { font-size: 12px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+  #stats b { color: var(--text); }
+
+  #toolbar {
+    padding: 8px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    background: var(--panel-bg); font-size: 12px;
+  }
+  #toolbar label { display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+  #toolbar input[type="text"] {
+    padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--bg); color: var(--text); font-size: 12px; width: 180px;
+  }
+  .zoom-btn {
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    border-radius: 5px; width: 26px; height: 26px; cursor: pointer; font-size: 14px; line-height: 1;
+  }
+  .zoom-btn:hover { border-color: var(--accent); }
+  #zoomLabel { color: var(--muted); min-width: 42px; text-align: center; }
+
+  #main { flex: 1; display: flex; min-height: 0; }
+  #canvasWrap { flex: 1; position: relative; overflow: hidden; cursor: grab; }
+  #canvasWrap.grabbing { cursor: grabbing; }
+  svg#graphSvg { width: 100%; height: 100%; display: block; }
+
+  #centerMark { fill: var(--border); font-weight: 700; text-anchor: middle; pointer-events: none; opacity: .4; letter-spacing: .08em; }
+
+  .node circle { stroke: rgba(0,0,0,.35); stroke-width: 1; cursor: pointer; transition: opacity .15s; }
+  .node.hidden { display: none; }
+  .node text { font-size: 10.5px; fill: var(--text); pointer-events: none; transition: opacity .15s; }
+  .node .sublabel { font-size: 9px; font-weight: 600; }
+  .node .sublabel.pos { fill: var(--pos); }
+  .node .sublabel.neg { fill: var(--neg); }
+  .node .sublabel.zero { fill: var(--muted); }
+  .node.search-match circle { stroke: #ffb703; stroke-width: 3; }
+  .node.selected circle { stroke: var(--accent); stroke-width: 3; }
+  .node.dimmed circle, .node.dimmed text { opacity: .15; }
+
+  .edge { fill: none; stroke: #8b93a1; transition: opacity .15s, stroke-width .15s; }
+  .edge.hidden { display: none; }
+  .edge.dimmed { opacity: .04 !important; }
+  .edge.highlight { stroke: var(--accent) !important; stroke-width: 2.6 !important; opacity: .95 !important; }
+  .edge-label { font-size: 8px; fill: var(--muted); pointer-events: none; transition: opacity .15s; }
+  .edge-label.hidden { display: none; }
+  .edge-label.dimmed { opacity: .04 !important; }
+
+  #sidebar {
+    width: 320px; border-left: 1px solid var(--border); background: var(--panel-bg);
+    padding: 14px; overflow-y: auto; font-size: 12px; flex-shrink: 0;
+  }
+  #sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }
+  #legend { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+  #legend .row { display: flex; align-items: center; gap: 7px; }
+  #legend .swatch { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  #details { border-top: 1px solid var(--border); padding-top: 12px; }
+  #details .placeholder { color: var(--muted); }
+  #details dl { margin: 0 0 10px; }
+  #details dt { color: var(--muted); margin-top: 6px; }
+  #details dd { margin: 0; font-weight: 600; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+  .chip { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px; font-size: 10.5px; }
+
+  .path-row { border-top: 1px solid var(--border); }
+  .path-row:last-child { border-bottom: 1px solid var(--border); }
+  .path-head { display: flex; align-items: center; gap: 6px; padding: 7px 2px; cursor: pointer; }
+  .path-head:hover { background: var(--bg); }
+  .path-head .chevron { width: 10px; color: var(--muted); transition: transform .15s; flex-shrink: 0; }
+  .path-head.expanded .chevron { transform: rotate(90deg); }
+  .path-head .name { flex: 1; font-weight: 600; cursor: pointer; }
+  .path-head .name:hover { color: var(--accent); text-decoration: underline; }
+  .path-head .cost { color: var(--muted); }
+  .path-hops { padding: 0 2px 10px 18px; display: none; }
+  .path-hops.expanded { display: block; }
+  .hop { font-size: 10.5px; padding: 3px 0; border-left: 2px solid var(--border); padding-left: 8px; margin-bottom: 2px; color: var(--muted); }
+  .hop b { color: var(--text); font-weight: 500; }
+  .hop .hop-cost { float: right; }
+  .no-paths { color: var(--muted); padding: 8px 0; }
+
+  #tooltip {
+    position: fixed; pointer-events: none; background: var(--panel-bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; font-size: 11px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.15); display: none; z-index: 10; max-width: 260px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Compass — Graph Viewer</h1>
+  <div id="stats"></div>
+</header>
+
+<div id="toolbar">
+  <input type="text" id="search" placeholder="Search a DEX… (Enter to focus)" />
+  <label><input type="checkbox" id="showCosts" /> Show cost labels</label>
+  <div style="display:flex; align-items:center; gap:6px; margin-left:auto;">
+    <button class="zoom-btn" id="zoomOut">−</button>
+    <span id="zoomLabel">100%</span>
+    <button class="zoom-btn" id="zoomIn">+</button>
+    <button class="zoom-btn" id="zoomFit" title="Fit to screen">⤢</button>
+  </div>
+</div>
+
+<div id="main">
+  <div id="canvasWrap">
+    <svg id="graphSvg">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#8b93a1"></path>
+        </marker>
+      </defs>
+      <g id="viewport">
+        <text id="centerMark" x="0" y="14">COMPASS</text>
+        <g id="edgesLayer"></g>
+        <g id="nodesLayer"></g>
+      </g>
+    </svg>
+  </div>
+
+  <div id="sidebar">
+    <h2>Balance</h2>
+    <div id="legend">
+      <div class="row"><span class="swatch" style="background:var(--pos)"></span> Surplus (withdrawable)</div>
+      <div class="row"><span class="swatch" style="background:var(--neg)"></span> Deficit (needs funding)</div>
+      <div class="row"><span class="swatch" style="background:var(--zero)"></span> Balanced</div>
+    </div>
+    <div id="details">
+      <h2>Details</h2>
+      <div class="placeholder">Click a DEX to inspect it — balance, accepted stablecoins, supported chains, and the cheapest routing path to every other DEX.</div>
+    </div>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+const GRAPH_DATA = __GRAPH_DATA_JSON__;
+
+const MIN_R = 16, MAX_R = 34, MIN_ARC_SPACING = 70;
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+const dexByName = new Map(GRAPH_DATA.dexNodes.map(d => [d.name, d]));
+const dexById = new Map(GRAPH_DATA.dexNodes.map(d => [d.id, d]));
+
+function activity(dex) {
+  const withdrawTotal = Object.values(dex.withdrawBalances).reduce((s, v) => s + v, 0);
+  return Math.max(Math.abs(dex.inbalance), withdrawTotal);
+}
+function sign(dex) {
+  return dex.inbalance > 1e-9 ? "pos" : dex.inbalance < -1e-9 ? "neg" : "zero";
+}
+
+function layoutNodes(dexNodes) {
+  const ordered = [...dexNodes].sort((a, b) => a.name.localeCompare(b.name));
+  const n = ordered.length;
+  const radius = Math.max(220, (n * MIN_ARC_SPACING) / (2 * Math.PI));
+  const maxActivity = Math.max(1, ...ordered.map(activity));
+
+  ordered.forEach((dex, i) => {
+    const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+    dex.angle = angle;
+    dex.cx = Math.cos(angle) * radius;
+    dex.cy = Math.sin(angle) * radius;
+    dex.r = MIN_R + Math.sqrt(activity(dex) / maxActivity) * (MAX_R - MIN_R);
+  });
+  return radius;
+}
+const ringRadius = layoutNodes(GRAPH_DATA.dexNodes);
+document.getElementById("centerMark").setAttribute("font-size", Math.max(18, ringRadius * 0.09));
+
+// Chaque paire (X, Y) atteignable devient une seule arête directe : le chemin
+// réel (via bridges/swaps) reste calculé côté Python (voir web_view.py
+// _computeDexPaths) et n'est affiché qu'au clic, dans le panneau latéral.
+const pathEdges = [];
+for (const [fromName, targets] of Object.entries(GRAPH_DATA.paths)) {
+  for (const [toName, path] of Object.entries(targets)) {
+    pathEdges.push({ from: fromName, to: toName, cost: path.totalCost, hops: path.hops });
+  }
+}
+const maxCost = Math.max(1e-9, ...pathEdges.map(e => e.cost));
+
+function fmt(x) {
+  if (x === null || x === undefined) return "–";
+  return Math.abs(x) >= 1000 ? x.toFixed(0) : x.toFixed(2);
+}
+function fmtSigned(x) {
+  return (x > 0 ? "+" : "") + fmt(x);
+}
+
+function edgeGeometry(a, b) {
+  const dx = b.cx - a.cx, dy = b.cy - a.cy;
+  const dist = Math.hypot(dx, dy) || 1;
+  const ux = dx / dist, uy = dy / dist;
+  const nx = -dy / dist, ny = dx / dist;
+  const sx = a.cx + ux * a.r, sy = a.cy + uy * a.r;
+  const ex = b.cx - ux * b.r, ey = b.cy - uy * b.r;
+  const curvature = 14;
+  const mx = (sx + ex) / 2 + nx * curvature;
+  const my = (sy + ey) / 2 + ny * curvature;
+  return { sx, sy, ex, ey, mx, my };
+}
+
+const svg = document.getElementById("graphSvg");
+const viewport = document.getElementById("viewport");
+const edgesLayer = document.getElementById("edgesLayer");
+const nodesLayer = document.getElementById("nodesLayer");
+const canvasWrap = document.getElementById("canvasWrap");
+const tooltip = document.getElementById("tooltip");
+
+const edgeElements = [];
+for (const e of pathEdges) {
+  const a = dexByName.get(e.from), b = dexByName.get(e.to);
+  const { sx, sy, mx, my, ex, ey } = edgeGeometry(a, b);
+  const weight = 1 - e.cost / maxCost;
+
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", `M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}`);
+  path.setAttribute("class", "edge");
+  path.setAttribute("marker-end", "url(#arrow)");
+  path.style.strokeWidth = (0.8 + weight * 2.2).toFixed(2);
+  path.style.opacity = (0.12 + weight * 0.35).toFixed(2);
+  path.dataset.from = e.from;
+  path.dataset.to = e.to;
+
+  const label = document.createElementNS(SVG_NS, "text");
+  label.setAttribute("class", "edge-label hidden");
+  label.setAttribute("x", mx);
+  label.setAttribute("y", my);
+  label.setAttribute("text-anchor", "middle");
+  label.textContent = fmt(e.cost);
+
+  edgesLayer.appendChild(path);
+  edgesLayer.appendChild(label);
+  edgeElements.push({ e, path, label });
+
+  path.addEventListener("mouseenter", (ev) => showTooltip(ev, edgeTooltipHtml(e)));
+  path.addEventListener("mousemove", positionTooltip);
+  path.addEventListener("mouseleave", hideTooltip);
+}
+
+const nodeElements = new Map();
+for (const dex of GRAPH_DATA.dexNodes) {
+  const g = document.createElementNS(SVG_NS, "g");
+  g.setAttribute("class", "node");
+  g.setAttribute("transform", `translate(${dex.cx}, ${dex.cy})`);
+  g.dataset.name = dex.name;
+
+  const circle = document.createElementNS(SVG_NS, "circle");
+  circle.setAttribute("r", dex.r);
+  circle.style.fill = `var(--${sign(dex)})`;
+  circle.style.fillOpacity = "0.28";
+  circle.style.stroke = `var(--${sign(dex)})`;
+  circle.style.strokeWidth = "1.6";
+  g.appendChild(circle);
+
+  const label = document.createElementNS(SVG_NS, "text");
+  label.setAttribute("y", -dex.r - 8);
+  label.setAttribute("text-anchor", "middle");
+  label.textContent = dex.name;
+  g.appendChild(label);
+
+  const sub = document.createElementNS(SVG_NS, "text");
+  sub.setAttribute("class", `sublabel ${sign(dex)}`);
+  sub.setAttribute("y", 4);
+  sub.setAttribute("text-anchor", "middle");
+  sub.textContent = fmtSigned(dex.inbalance);
+  g.appendChild(sub);
+
+  nodesLayer.appendChild(g);
+  nodeElements.set(dex.name, g);
+
+  g.addEventListener("click", (ev) => { ev.stopPropagation(); selectDex(dex.name); });
+  g.addEventListener("mouseenter", (ev) => showTooltip(ev, nodeTooltipHtml(dex)));
+  g.addEventListener("mousemove", positionTooltip);
+  g.addEventListener("mouseleave", hideTooltip);
+}
+
+function nodeTooltipHtml(dex) {
+  return `<div><b>${dex.name}</b></div>
+          <div>balance: ${fmtSigned(dex.inbalance)}</div>
+          <div>stables: ${dex.stables.join(", ") || "–"}</div>
+          <div>chains: ${dex.chains.length}</div>`;
+}
+function edgeTooltipHtml(e) {
+  return `<div><b>${e.from}</b> → <b>${e.to}</b></div><div>cheapest route cost: ${fmt(e.cost)}</div>`;
+}
+function showTooltip(ev, html) { tooltip.innerHTML = html; tooltip.style.display = "block"; positionTooltip(ev); }
+function positionTooltip(ev) { tooltip.style.left = (ev.clientX + 14) + "px"; tooltip.style.top = (ev.clientY + 14) + "px"; }
+function hideTooltip() { tooltip.style.display = "none"; }
+
+let selectedName = null;
+
+function clearSelection() {
+  selectedName = null;
+  document.querySelectorAll(".node.selected").forEach(e => e.classList.remove("selected"));
+  document.querySelectorAll(".dimmed").forEach(e => e.classList.remove("dimmed"));
+  document.querySelectorAll(".edge.highlight").forEach(e => e.classList.remove("highlight"));
+  document.getElementById("details").innerHTML = `
+    <h2>Details</h2>
+    <div class="placeholder">Click a DEX to inspect it — balance, accepted stablecoins, supported chains, and the cheapest routing path to every other DEX.</div>`;
+}
+
+function renderDexDetails(dex) {
+  const targets = GRAPH_DATA.paths[dex.name] || {};
+  const stableChips = dex.stables.map(s => {
+    const bal = dex.withdrawBalances[s] || 0;
+    return `<span class="chip">${s}: ${fmt(bal)}</span>`;
+  }).join("") || `<span class="chip">none</span>`;
+  const chainChips = dex.chains.map(c => `<span class="chip">${c}</span>`).join("");
+
+  const rows = Object.entries(targets).sort((a, b) => a[1].totalCost - b[1].totalCost).map(([toName, path]) => {
+    const hops = path.hops.map(h =>
+      `<div class="hop"><span class="hop-cost">${fmt(h.cost)}</span><b>${h.from}</b> → ${h.to}</div>`
+    ).join("") || `<div class="hop">direct — no intermediate hop</div>`;
+    return `
+      <div class="path-row">
+        <div class="path-head" data-target="${toName}">
+          <span class="chevron">▶</span>
+          <span class="name" data-nav="${toName}">${toName}</span>
+          <span class="cost">${fmt(path.totalCost)}</span>
+        </div>
+        <div class="path-hops">${hops}</div>
+      </div>`;
+  }).join("") || `<div class="no-paths">No route found to any other DEX (no withdrawable stable configured).</div>`;
+
+  document.getElementById("details").innerHTML = `
+    <h2>Details</h2>
+    <dl>
+      <dt>DEX</dt><dd>${dex.name}</dd>
+      <dt>Balance</dt><dd class="${sign(dex)}" style="color:var(--${sign(dex)})">${fmtSigned(dex.inbalance)}</dd>
+      <dt>Withdrawable by stable</dt><dd><div class="chip-row">${stableChips}</div></dd>
+      <dt>Supported chains</dt><dd><div class="chip-row">${chainChips}</div></dd>
+    </dl>
+    <h2>Paths to other DEXes</h2>
+    ${rows}`;
+
+  document.querySelectorAll(".path-head").forEach(head => {
+    head.addEventListener("click", (ev) => {
+      if (ev.target.dataset.nav) return;
+      head.classList.toggle("expanded");
+      head.nextElementSibling.classList.toggle("expanded");
+    });
+  });
+  document.querySelectorAll("[data-nav]").forEach(el => {
+    el.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const target = dexByName.get(el.dataset.nav);
+      if (target) { selectDex(target.name); focusOn(target.cx, target.cy); }
+    });
+  });
+}
+
+function selectDex(name) {
+  const dex = dexByName.get(name);
+  if (!dex) return;
+  clearSelection();
+  selectedName = name;
+  nodeElements.get(name).classList.add("selected");
+
+  const connected = new Set([name, ...Object.keys(GRAPH_DATA.paths[name] || {})]);
+  for (const [n, el] of nodeElements) el.classList.toggle("dimmed", !connected.has(n));
+  for (const { e, path, label } of edgeElements) {
+    const isOutgoing = e.from === name;
+    path.classList.toggle("dimmed", !isOutgoing);
+    label.classList.toggle("dimmed", !isOutgoing && !label.classList.contains("hidden"));
+    if (isOutgoing) path.classList.add("highlight");
+  }
+
+  renderDexDetails(dex);
+}
+
+svg.addEventListener("click", clearSelection);
+
+const searchInput = document.getElementById("search");
+searchInput.addEventListener("input", () => {
+  const query = searchInput.value.trim().toLowerCase();
+  for (const [name, el] of nodeElements) {
+    el.classList.toggle("search-match", query.length > 0 && name.toLowerCase().includes(query));
+  }
+});
+searchInput.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Enter") return;
+  const query = searchInput.value.trim().toLowerCase();
+  const match = GRAPH_DATA.dexNodes.find(d => d.name.toLowerCase().includes(query));
+  if (match) { selectDex(match.name); focusOn(match.cx, match.cy); }
+});
+
+const showCosts = document.getElementById("showCosts");
+showCosts.addEventListener("change", () => {
+  for (const { label } of edgeElements) label.classList.toggle("hidden", !showCosts.checked);
+});
+
+let view = { x: 0, y: 0, k: 1 };
+function applyView() {
+  viewport.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`);
+  document.getElementById("zoomLabel").textContent = Math.round(view.k * 100) + "%";
+}
+
+function focusOn(cx, cy) {
+  const rect = canvasWrap.getBoundingClientRect();
+  view.x = rect.width / 2 - cx * view.k;
+  view.y = rect.height / 2 - cy * view.k;
+  applyView();
+}
+
+function fitToScreen() {
+  if (GRAPH_DATA.dexNodes.length === 0) return;
+  const pad = ringRadius * 0.25 + 70;
+  const xs = GRAPH_DATA.dexNodes.map(n => n.cx), ys = GRAPH_DATA.dexNodes.map(n => n.cy);
+  const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad;
+  const minY = Math.min(...ys) - pad, maxY = Math.max(...ys) + pad;
+  const rect = canvasWrap.getBoundingClientRect();
+  const k = Math.min(rect.width / (maxX - minX), rect.height / (maxY - minY), 2.2);
+  view.k = k;
+  view.x = rect.width / 2 - (minX + maxX) / 2 * k;
+  view.y = rect.height / 2 - (minY + maxY) / 2 * k;
+  applyView();
+}
+
+canvasWrap.addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  const rect = canvasWrap.getBoundingClientRect();
+  const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+  const worldX = (mx - view.x) / view.k, worldY = (my - view.y) / view.k;
+  const factor = Math.exp(-ev.deltaY * 0.001);
+  view.k = Math.min(4, Math.max(0.15, view.k * factor));
+  view.x = mx - worldX * view.k;
+  view.y = my - worldY * view.k;
+  applyView();
+}, { passive: false });
+
+let dragging = false, dragStart = null;
+canvasWrap.addEventListener("pointerdown", (ev) => {
+  dragging = true;
+  dragStart = { x: ev.clientX - view.x, y: ev.clientY - view.y };
+  canvasWrap.classList.add("grabbing");
+});
+window.addEventListener("pointermove", (ev) => {
+  if (!dragging) return;
+  view.x = ev.clientX - dragStart.x;
+  view.y = ev.clientY - dragStart.y;
+  applyView();
+});
+window.addEventListener("pointerup", () => { dragging = false; canvasWrap.classList.remove("grabbing"); });
+
+document.getElementById("zoomIn").addEventListener("click", () => { view.k = Math.min(4, view.k * 1.25); applyView(); });
+document.getElementById("zoomOut").addEventListener("click", () => { view.k = Math.max(0.15, view.k / 1.25); applyView(); });
+document.getElementById("zoomFit").addEventListener("click", fitToScreen);
+
+const reachablePairs = pathEdges.length;
+const totalPairs = GRAPH_DATA.dexNodes.length * (GRAPH_DATA.dexNodes.length - 1);
+document.getElementById("stats").innerHTML = `
+  <span><b>${GRAPH_DATA.dexNodes.length}</b> DEXes</span>
+  <span><b>${reachablePairs}</b> / ${totalPairs} routes reachable</span>`;
+
+requestAnimationFrame(fitToScreen);
+window.addEventListener("resize", fitToScreen);
+</script>
+</body>
+</html>

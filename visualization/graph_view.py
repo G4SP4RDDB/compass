@@ -9,15 +9,17 @@ from graph.node import Node, NodeType
 
 NODE_COLOR_BY_TYPE = {
     NodeType.SourceNode: "gold",
+    NodeType.Withdraw: "khaki",
     NodeType.Deposit: "skyblue",
     NodeType.Bridge: "lightgreen",
     NodeType.Swap: "orange",
 }
 
-# Position en colonnes : Source -> Deposit/Swap -> Bridge, pour retrouver
-# visuellement le sens du flot plutôt qu'un nuage de points désordonné.
+# Position en colonnes : Source/Withdraw -> Deposit/Swap -> Bridge, pour
+# retrouver visuellement le sens du flot plutôt qu'un nuage de points désordonné.
 NODE_LAYER_BY_TYPE = {
     NodeType.SourceNode: 0,
+    NodeType.Withdraw: 0,
     NodeType.Deposit: 1,
     NodeType.Swap: 1,
     NodeType.Bridge: 2,
@@ -26,11 +28,13 @@ NODE_LAYER_BY_TYPE = {
 
 def _nodeLabel(node: Node) -> str:
     if node.type == NodeType.SourceNode:
-        return f"Source\nbal={node.balance:g}"
+        return f"{node.dex.name}\nbal={node.balance:g}"
+    if node.type == NodeType.Withdraw:
+        return f"{node.dex.name}\n{node.stable.name}\nbal={node.balance:g}"
     if node.type == NodeType.Deposit:
-        return f"Deposit\n{node.chain.name}\ninbalance={node.dex.inbalance:g}"
+        return f"{node.dex.name}\n{node.chain.name}/{node.stable.name}"
     if node.type == NodeType.Bridge:
-        return f"Bridge\n{node.chain.name}"
+        return f"Bridge\n{node.chain.name}/{node.stable.name}"
     if node.type == NodeType.Swap:
         return f"Swap\n{node.stableIn.name}->{node.stableOut.name}"
     return node.type.name
@@ -79,20 +83,26 @@ def renderGraph(graph: Graph, outputPath: str = "graph.png", show: bool = False)
         (u, v): data["label"] for u, v, data in nxGraph.edges(data=True) if data.get("label")
     }
 
-    plt.figure(figsize=(14, 10))
+    # La colonne la plus chargée (souvent Deposit) fixe la hauteur nécessaire :
+    # sans ça, les labels se chevauchent dès qu'un graphe dépasse une dizaine
+    # de nodes par couche (ex: le registre complet des DEX).
+    maxNodesPerLayer = max(list(layers.values()).count(layer) for layer in set(layers.values())) if layers else 1
+    figHeight = max(10, maxNodesPerLayer * 0.55)
+
+    plt.figure(figsize=(16, figHeight))
     nx.draw(
         nxGraph,
         positions,
         labels=labels,
         node_color=colors,
-        node_size=1800,
-        font_size=7,
+        node_size=900,
+        font_size=6,
         arrows=True,
-        arrowsize=15,
+        arrowsize=12,
         connectionstyle="arc3,rad=0.08",
     )
     if edgeLabels:
-        nx.draw_networkx_edge_labels(nxGraph, positions, edge_labels=edgeLabels, font_size=6)
+        nx.draw_networkx_edge_labels(nxGraph, positions, edge_labels=edgeLabels, font_size=5)
 
     plt.tight_layout()
     plt.savefig(outputPath, dpi=150)

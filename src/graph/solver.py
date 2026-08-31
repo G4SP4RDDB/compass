@@ -1,5 +1,6 @@
 from ortools.sat.python import cp_model
 
+from connectors.exceptions import ConnectorError
 from graph import costing
 from graph.edge import Edge
 from graph.graph import Graph
@@ -63,7 +64,16 @@ def buildModel(
 
 
 def _addSwapCost(model: cp_model.CpModel, edge: Edge, flow: cp_model.IntVar, index: int) -> cp_model.IntVar:
-    breakpoints = costing.computeSwapCostBreakpoints(edge)
+    try:
+        breakpoints = costing.computeSwapCostBreakpoints(edge)
+    except ConnectorError:
+        # Pas encore de données de pricing pour cette chain (aujourd'hui,
+        # seul Ethereum a un subgraph Uniswap vérifié — voir
+        # UNISWAP_V2_SUBGRAPH_ID_BY_CHAIN) : arête désactivée plutôt que de
+        # planter la construction du modèle pour tout le reste du graphe.
+        model.Add(flow == 0)
+        return model.NewIntVar(0, 0, f"swapCost_{index}")
+
     points = [(_scaledInt(x), _scaledInt(y)) for x, y in breakpoints]
 
     swapCost = model.NewIntVar(0, points[-1][1], f"swapCost_{index}")
@@ -88,7 +98,10 @@ def _addFlowConservation(model: cp_model.CpModel, graph: Graph, flowVars: list[c
         inflowByNode[edge.v.nodeIndex].append(flow)
 
     for node in graph.nodeList:
-        supply = _scaledInt(node.balance) if node.type == NodeType.SourceNode else 0
+        # SourceNode (déficit <= 0) et WithdrawNode (surplus >= 0) sont les
+        # deux seuls types de nodes avec un supply non nul ; tout le reste
+        # (Deposit, Bridge, Swap) est un pur nœud de transit.
+        supply = _scaledInt(node.balance) if node.type in (NodeType.SourceNode, NodeType.Withdraw) else 0
         model.Add(sum(outflowByNode[node.nodeIndex]) - sum(inflowByNode[node.nodeIndex]) == supply)
 
 

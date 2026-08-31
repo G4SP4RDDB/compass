@@ -1,20 +1,16 @@
+from .alchemy import AlchemyConnector
 from .cowswap import CowSwapConnector
-from .etherscan import EtherscanConnector
 from .exceptions import ConnectorAPIError, ConnectorError, UnsupportedChainError
-from .models import GasCost, PoolReserves, SwapQuote
-from .prices import CoinGeckoPriceConnector
+from .models import GasCost, SwapQuote, UniswapQuote
 from .solana_rpc import SolanaRPCConnector
-from .uniswap import UniswapConnector
 
 __all__ = [
+    "AlchemyConnector",
     "CowSwapConnector",
-    "EtherscanConnector",
     "SolanaRPCConnector",
-    "CoinGeckoPriceConnector",
-    "UniswapConnector",
     "GasCost",
     "SwapQuote",
-    "PoolReserves",
+    "UniswapQuote",
     "ConnectorError",
     "UnsupportedChainError",
     "ConnectorAPIError",

@@ -4,14 +4,14 @@ import requests
 
 from graph.structures.DEXes import Chain
 
+from .alchemy import AlchemyConnector
 from .chain_metadata import get_metadata
 from .config import SOLANA_RPC_URL
 from .exceptions import ConnectorAPIError
 from .models import GasCost
-from .prices import CoinGeckoPriceConnector
 
 # Protocol constant (lamports charged per signature), not worth a live RPC
-# round-trip to "confirm" — see connectors/etherscan.py for the equivalent
+# round-trip to "confirm" — see connectors/alchemy.py for the equivalent
 # live gas price lookup on EVM chains, where the price genuinely varies.
 LAMPORTS_PER_SIGNATURE = 5000
 LAMPORTS_PER_SOL = 1_000_000_000
@@ -19,8 +19,11 @@ DEFAULT_COMPUTE_UNITS = 200_000
 
 
 class SolanaRPCConnector:
-    def __init__(self, price_connector: CoinGeckoPriceConnector | None = None) -> None:
-        self._prices = price_connector or CoinGeckoPriceConnector()
+    def __init__(self, alchemy: AlchemyConnector | None = None) -> None:
+        # Solana n'a pas de network RPC Alchemy dans ce projet (voir
+        # ALCHEMY_NETWORK_SLUG_BY_CHAIN) : seule la Prices API (endpoint
+        # global, indépendant de la network) est utilisée ici.
+        self._alchemy = alchemy or AlchemyConnector()
 
     def _rpc(self, method: str, params: list | None = None):
         payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
@@ -55,7 +58,7 @@ class SolanaRPCConnector:
 
         metadata = get_metadata(Chain.SOLANA)
         try:
-            usd_price = self._prices.get_usd_price(Chain.SOLANA)
+            usd_price = self._alchemy.get_usd_price(Chain.SOLANA)
             usd_amount = native_amount * usd_price
         except ConnectorAPIError:
             usd_amount = None

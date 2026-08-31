@@ -9,6 +9,7 @@ class NodeType(Enum):
     Swap = auto()
     Bridge = auto()
     SourceNode = auto()
+    Withdraw = auto()
 
 
 class Node(ABC):
@@ -23,13 +24,27 @@ class SourceNode (Node):
         super().__init__(NodeType.SourceNode,nodeIndex)
         self.balance = balance
         self.dex = dex
-        
+
 
 class DepositNode(Node):
-    def __init__(self,chain: Chain,nodeIndex:int,dex:DEX):
+    def __init__(self,chain: Chain,nodeIndex:int,dex:DEX,stable:Stable):
         super().__init__(NodeType.Deposit,nodeIndex)
         self.chain = chain
         self.dex = dex
+        self.stable = stable
+
+
+class WithdrawNode(Node):
+    def __init__(self, stable: Stable, nodeIndex: int, dex: DEX, balance: float = 0.0):
+        super().__init__(NodeType.Withdraw, nodeIndex)
+        self.stable = stable
+        self.dex = dex
+        # Cash à retirer pour CETTE stable précise, toujours >= 0. Fongible
+        # entre chains (n'importe laquelle des chains du DEX peut servir de
+        # sortie), jamais entre stables (voir DEX.withdrawBalances). Miroir de
+        # SourceNode : jamais d'arête entrante, pour la même raison structurelle
+        # (empêcher un DEX de servir de pont gratuit entre deux de ses chains).
+        self.balance = balance
 
 
 class SwapNode(Node):

@@ -1,18 +1,30 @@
+from connectors.alchemy import AlchemyConnector
 from connectors.gas import GasFeeService, GasOperation
-from connectors.stable_tokens import get_stable_token_address
-from connectors.uniswap import UniswapConnector
+from connectors.stable_tokens import STABLE_DECIMALS, get_stable_token_address
 from graph.edge import Edge
 from graph.node import NodeType, SwapNode
 
 
 def computeCost(edge: Edge, gasFeeService: GasFeeService) -> float:
-    if NodeType.SourceNode in (edge.u.type, edge.v.type):
-        return 0.0  # edge virtuel (accounting de l'imbalance), pas de tx réelle
+    if NodeType.SourceNode in (edge.u.type, edge.v.type) or NodeType.Withdraw in (edge.u.type, edge.v.type):
+        # edges virtuels (accounting du déficit/surplus), pas de tx réelle :
+        # le vrai coût est facturé sur le hop suivant (Deposit->Bridge, etc).
+        # WithdrawNode n'a pas de `.chain` (scope dex+stable, pas dex+chain) :
+        # sans ce garde-fou, la branche générique v.type in (Deposit,Bridge)
+        # plus bas planterait en lisant edge.u.chain.
+        return 0.0
 
     if edge.v.type == NodeType.Swap:
         # frais fixe de la tx de swap ; le coût variable (slippage) est géré
         # séparément, voir computeSwapCostBreakpoints
         return gasFeeService.get_gas_cost_usd(edge.v.chain, GasOperation.SWAP)
+
+    if edge.u.type == NodeType.Swap:
+        # sortie du swap (Swap -> Bridge de la stable de sortie) : pure
+        # comptabilité, déjà facturé à l'entrée juste au-dessus. Sans ce
+        # garde-fou, la branche générique v.type in (Deposit,Bridge) plus bas
+        # facturerait un second gas fee (TRANSFER) pour la même opération.
+        return 0.0
 
     if edge.u.type == NodeType.Bridge and edge.v.type == NodeType.Bridge:
         # Bridge->Bridge traverse deux chains différentes : le gas est payé
@@ -28,21 +40,19 @@ def computeCost(edge: Edge, gasFeeService: GasFeeService) -> float:
 
 
 NUM_SWAP_COST_SEGMENTS = 4
-UNISWAP_FEE_BPS = 30  # 0.3%, frais standard d'un pool Uniswap V2
 
 
 def computeSwapCostBreakpoints(
-    edge: Edge, uniswapConnector: UniswapConnector | None = None
+    edge: Edge, alchemyConnector: AlchemyConnector | None = None
 ) -> list[tuple[float, float]]:
     """Points (montant en USD, coût en USD) approximant la courbe de coût d'un
     swap, en NUM_SWAP_COST_SEGMENTS segments linéaires.
 
-    Coût dérivé de la formule constant-product d'Uniswap V2 (x*y=k) à partir
-    des réserves réelles du pool : contrairement à des cotes CowSwap
-    échantillonnées (bruitées, pas de formule fermée), cette fonction est
-    mathématiquement convexe, donc l'approximation par segments est exacte
-    sans traitement supplémentaire (l'enveloppe convexe reste un filet de
-    sécurité bon marché contre les arrondis flottants).
+    Coût échantillonné directement via QuoterV2 (Uniswap V3, eth_call en
+    lecture seule) : contrairement à notre ancienne approximation
+    constant-product (V2), ceci lit la vraie liquidité concentrée du pool,
+    donc le montant de sortie réel. L'enveloppe convexe reste un filet de
+    sécurité bon marché si les ticks traversés cassent la convexité stricte.
     """
     swapNode = edge.v
     if not isinstance(swapNode, SwapNode):
@@ -50,24 +60,22 @@ def computeSwapCostBreakpoints(
     if edge.capacity is None:
         raise ValueError("edge.capacity doit être calculé avant d'estimer le coût du swap")
 
-    connector = uniswapConnector or UniswapConnector()
+    connector = alchemyConnector or AlchemyConnector()
     sellTokenAddress = get_stable_token_address(swapNode.chain, swapNode.stableIn)
     buyTokenAddress = get_stable_token_address(swapNode.chain, swapNode.stableOut)
-    reserves = connector.get_reserves(swapNode.chain, sellTokenAddress, buyTokenAddress)
+    unitsPerDollar = 10**STABLE_DECIMALS
 
     breakpoints: list[tuple[float, float]] = [(0.0, 0.0)]
     for step in range(1, NUM_SWAP_COST_SEGMENTS + 1):
         amountInUsd = edge.capacity * step / NUM_SWAP_COST_SEGMENTS
-        costUsd = _constantProductCost(amountInUsd, reserves.reserve_in, reserves.reserve_out)
+        quote = connector.get_quote(
+            swapNode.chain, sellTokenAddress, buyTokenAddress, round(amountInUsd * unitsPerDollar)
+        )
+        amountOutUsd = quote.buy_amount / unitsPerDollar
+        costUsd = max(amountInUsd - amountOutUsd, 0.0)
         breakpoints.append((amountInUsd, costUsd))
 
     return _lowerConvexHull(breakpoints)
-
-
-def _constantProductCost(amountIn: float, reserveIn: float, reserveOut: float) -> float:
-    amountInWithFee = amountIn * (10_000 - UNISWAP_FEE_BPS) / 10_000
-    amountOut = amountInWithFee * reserveOut / (reserveIn + amountInWithFee)
-    return max(amountIn - amountOut, 0.0)
 
 
 def _lowerConvexHull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
