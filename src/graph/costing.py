@@ -1,18 +1,34 @@
+from typing import cast
+
+from connectors import cctp, chain_block_times
 from connectors.alchemy import AlchemyConnector
 from connectors.gas import GasFeeService, GasOperation
 from connectors.stable_tokens import STABLE_DECIMALS, get_stable_token_address
 from graph.edge import Edge
-from graph.node import NodeType, SwapNode
+from graph.node import NodeType, SourceNode, SwapNode, WithdrawNode
+from graph.structures.bridges import BridgeProtocol
+from graph.urgency import TimeWeightParams, computeTimeWeight
+
+# Pas de protocole réel modélisé pour GENERIC (voir BridgeProtocol) : ordre de
+# grandeur délibérément conservateur (proche de V1) plutôt qu'un 0.0 qui
+# biaiserait le solveur en faveur d'un bridge dont on ne connaît pas la vitesse.
+GENERIC_BRIDGE_DELAY_SECONDS = 20 * 60
 
 
 def computeCost(edge: Edge, gasFeeService: GasFeeService) -> float:
-    if NodeType.SourceNode in (edge.u.type, edge.v.type) or NodeType.Withdraw in (edge.u.type, edge.v.type):
-        # edges virtuels (accounting du déficit/surplus), pas de tx réelle :
-        # le vrai coût est facturé sur le hop suivant (Deposit->Bridge, etc).
-        # WithdrawNode n'a pas de `.chain` (scope dex+stable, pas dex+chain) :
-        # sans ce garde-fou, la branche générique v.type in (Deposit,Bridge)
-        # plus bas planterait en lisant edge.u.chain.
-        return 0.0
+    if edge.u.type == NodeType.Withdraw:
+        # Retrait CEX du DEX surplus (WithdrawNode -> DepositNode de ce même
+        # DEX, voir Graph._addSourceAndDepositNodes) : frais fixe facturé par
+        # la plateforme avant que les fonds soient mobilisables ailleurs dans
+        # le graphe. WithdrawNode n'a pas de `.chain` (scope dex+stable, pas
+        # dex+chain) : sans ce garde-fou en premier, la branche générique
+        # v.type in (Deposit,Bridge) plus bas planterait en lisant edge.u.chain.
+        return cast(WithdrawNode, edge.u).dex.withdrawFeeUsd
+
+    if edge.v.type == NodeType.SourceNode:
+        # Dépôt CEX comblant le déficit du DEX destination (DepositNode ->
+        # SourceNode de ce même DEX, idem Graph._addSourceAndDepositNodes).
+        return cast(SourceNode, edge.v).dex.depositFeeUsd
 
     if edge.v.type == NodeType.Swap:
         # frais fixe de la tx de swap ; le coût variable (slippage) est géré
@@ -28,8 +44,11 @@ def computeCost(edge: Edge, gasFeeService: GasFeeService) -> float:
 
     if edge.u.type == NodeType.Bridge and edge.v.type == NodeType.Bridge:
         # Bridge->Bridge traverse deux chains différentes : le gas est payé
-        # sur la chain de départ pour initier le transfert.
-        return gasFeeService.get_gas_cost_usd(edge.u.chain, GasOperation.BRIDGE_SEND)
+        # sur la chain de départ pour initier le transfert. Une edge par
+        # protocole disponible (voir Graph._linkBridges) : edge.bridgeProtocol
+        # dit lequel pricer.
+        assert edge.bridgeProtocol is not None
+        return gasFeeService.get_bridge_gas_cost_usd(edge.u.chain, edge.v.chain, edge.u.stable, edge.bridgeProtocol)
 
     if edge.v.type in (NodeType.Deposit, NodeType.Bridge):
         # Deposit<->Deposit et Deposit<->Bridge sont toujours sur la même chain
@@ -91,11 +110,40 @@ def _cross(o: tuple[float, float], a: tuple[float, float], b: tuple[float, float
     return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
 
 
+def computeTimeWeightedCost(fee: float, edgeTime: float, sigmaD: float, params: TimeWeightParams) -> float:
+    """w(e, d) = Fee(e) + λ(σ_d) · Time(e), pour la commodité destinée au DEX d
+    dont l'urgence de liquidation est σ_d."""
+    return fee + computeTimeWeight(sigmaD, params) * edgeTime
+
+
 def computeDelay(edge: Edge) -> float:
-    if edge.v.type == NodeType.Bridge:
-        pass  # TODO: délai du bridge pour la chain
-    elif edge.v.type == NodeType.Swap:
-        pass  # TODO: délai CowSwap sur la chain
-    elif edge.v.type == NodeType.Deposit:
-        pass  # TODO: délai de bloc pour la transaction
-    return 0.0
+    if edge.u.type == NodeType.Withdraw:
+        # Délai de traitement du retrait CEX avant que les fonds soient
+        # mobilisables ailleurs (même edge que dans computeCost ci-dessus).
+        return cast(WithdrawNode, edge.u).dex.withdrawDelaySeconds
+
+    if edge.v.type == NodeType.SourceNode:
+        # Délai de traitement du dépôt CEX comblant le déficit du DEX destination.
+        return cast(SourceNode, edge.v).dex.depositDelaySeconds
+
+    if edge.u.type == NodeType.Bridge and edge.v.type == NodeType.Bridge:
+        # Traversée inter-chain réelle : le délai dépend du protocole (une
+        # edge par protocole, voir Graph._linkBridges).
+        return computeBridgeDelay(edge)
+
+    # Toute autre edge (Deposit<->Deposit, Deposit<->Bridge, Bridge<->Swap) ne
+    # quitte jamais sa chain d'origine (voir Graph._linkImbalancedDeposits /
+    # _linkBridges / _linkSwaps) : une tx on-chain doit encore attendre sa
+    # confirmation avant que les fonds soient mobilisables ailleurs, jamais
+    # 0s. edge.u a toujours .chain ici (Withdraw/SourceNode déjà retournés
+    # ci-dessus), et edge.u.chain == edge.v.chain par construction.
+    return chain_block_times.get_block_delay_seconds(edge.u.chain)
+
+
+def computeBridgeDelay(edge: Edge) -> float:
+    assert edge.bridgeProtocol is not None
+    if edge.bridgeProtocol == BridgeProtocol.CCTP_V1:
+        return cctp.CCTP_V1_DELAY_SECONDS_BY_CHAIN[edge.u.chain]
+    if edge.bridgeProtocol == BridgeProtocol.CCTP_V2:
+        return cctp.CCTP_V2_FAST_TRANSFER_DELAY_SECONDS
+    return GENERIC_BRIDGE_DELAY_SECONDS

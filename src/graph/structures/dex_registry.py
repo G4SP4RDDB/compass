@@ -3,14 +3,13 @@ from graph.structures.DEXes import DEX, Chain, Stable
 # Un seul point de vérité pour "quel DEX supporte quelles chains / quels
 # stables de dépôt". On ne garde que USDC/USDT (les seuls stables modélisés
 # par l'enum Stable) même quand le DEX en accepte d'autres (ex: Aster USDF/
-# asUSDF, Lighter USDG, Reya rUSD/srUSD) : ces autres stables sont ignorés,
-# pas convertis.
+# asUSDF, Lighter USDG) : ces autres stables sont ignorés, pas convertis.
 #
 # Une entrée manquante signalée explicitement plutôt que devinée :
 # - Variational (Omni) : stablecoin (USDC) connu, mais aucune chain fournie
 #   -> pas d'entrée tant que les chains ne sont pas précisées.
 _DEX_SPECS: dict[str, tuple[list[Chain], list[Stable]]] = {
-    "Aden": ([Chain.ETHEREUM, Chain.BSC, Chain.SOLANA], [Stable.USDT, Stable.USDC]),
+    "Aden": ([Chain.ETHEREUM, Chain.BSC, Chain.SOLANA], [Stable.USDT]),
     "Aster": (
         [Chain.BSC, Chain.ETHEREUM, Chain.ARBITRUM, Chain.SOLANA],
         [Stable.USDT, Stable.USDC],
@@ -33,11 +32,7 @@ _DEX_SPECS: dict[str, tuple[list[Chain], list[Stable]]] = {
     # inexistant, mais à affiner si MEXC ne supporte pas l'une d'entre elles
     # pour USDT/USDC.
     "MEXC": (list(Chain), [Stable.USDT, Stable.USDC]),
-    # Aucun stable de dépôt distinct documenté (settlement en USD via
-    # Ethereum) -> liste vide plutôt qu'une hypothèse USDC/USDT non confirmée.
-    "Ondo Perps": ([Chain.ETHEREUM], []),
-    "Pacifica": ([Chain.SOLANA], [Stable.USDC]),
-    "Reya": ([Chain.ETHEREUM, Chain.ARBITRUM], [Stable.USDC]),
+    "Ondo Perps": ([Chain.ETHEREUM], [Stable.USDC]),
 }
 
 

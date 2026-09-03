@@ -14,6 +14,16 @@
     --pos: #2fae5e;
     --neg: #e05252;
     --zero: #8b93a1;
+    --chosen: #d97706;
+    /* Une couleur par type d'opération (voir web_view.py:_hopKind) : distingue
+       d'un coup d'œil, dans la liste comme dans les hops détaillés, Withdraw/
+       Deposit (comptabilité interne à un DEX, jamais de mouvement de fonds
+       entre deux parties) d'On-chain transfer/Bridge/Swap (mouvement réel). */
+    --type-withdraw: #c2410c;
+    --type-deposit: #0d9488;
+    --type-transfer: #2563eb;
+    --type-bridge: #d97706;
+    --type-swap: #9333ea;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -25,6 +35,12 @@
       --accent: #5b9bff;
       --pos: #3ecb72;
       --neg: #ff6b6b;
+      --chosen: #fbbf24;
+      --type-withdraw: #fb923c;
+      --type-deposit: #2dd4bf;
+      --type-transfer: #60a5fa;
+      --type-bridge: #fbbf24;
+      --type-swap: #c084fc;
     }
   }
   * { box-sizing: border-box; }
@@ -75,17 +91,40 @@
   .node .sublabel.pos { fill: var(--pos); }
   .node .sublabel.neg { fill: var(--neg); }
   .node .sublabel.zero { fill: var(--muted); }
+  .node .node-monogram { font-size: 13px; font-weight: 700; letter-spacing: .02em; }
   .node.search-match circle { stroke: #ffb703; stroke-width: 3; }
   .node.selected circle { stroke: var(--accent); stroke-width: 3; }
   .node.dimmed circle, .node.dimmed text { opacity: .15; }
 
-  .edge { fill: none; stroke: #8b93a1; transition: opacity .15s, stroke-width .15s; }
+  .edge { fill: none; stroke: #8b93a1; pointer-events: none; transition: opacity .15s, stroke-width .15s; }
   .edge.hidden { display: none; }
   .edge.dimmed { opacity: .04 !important; }
   .edge.highlight { stroke: var(--accent) !important; stroke-width: 2.6 !important; opacity: .95 !important; }
+  /* Trajet réellement choisi par le solveur (voir GRAPH_DATA.journeys) : distinct
+     de .edge.highlight (survol/clic), qui peut se combiner par-dessus. La ligne
+     reste discrète — c'est le flux de points (.flow-dot) qui porte l'attention,
+     façon L2Beat, plutôt qu'un halo permanent sur le trait. */
+  .edge.chosen { stroke: var(--chosen); }
+  .edge.chosen.approximate { stroke-dasharray: 6 3; }
+  .edge.chosen.highlight { stroke: var(--chosen) !important; stroke-width: 3.2 !important; opacity: 1 !important; }
+  /* Léger feedback visuel au survol de la hitbox élargie (.edge-hit) : sans
+     ça, la zone cliquable (14px) déborde largement du trait visible (souvent
+     <1px) et le tooltip semblerait surgir "de nulle part". */
+  .edge.hover:not(.highlight) { opacity: .9 !important; stroke-width: 2.2 !important; }
+  /* Hitbox invisible, bien plus large que le trait dessiné (.edge) : porte
+     tous les listeners (survol/clic), voir la boucle de création des edges. */
+  .edge-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; }
+  .edge-hit.clickable { cursor: pointer; }
   .edge-label { font-size: 8px; fill: var(--muted); pointer-events: none; transition: opacity .15s; }
   .edge-label.hidden { display: none; }
   .edge-label.dimmed { opacity: .04 !important; }
+
+  /* Points animés le long d'une arête "chosen" (voir createFlowDots) : figure
+     le sens réel du flux, DEX source -> DEX destination. */
+  .flow-dot { fill: var(--chosen); }
+  .flow-dots { transition: opacity .15s; pointer-events: none; }
+  .flow-dots.dimmed { opacity: 0 !important; }
+  .flow-dots.hidden { display: none; }
 
   #sidebar {
     width: 320px; border-left: 1px solid var(--border); background: var(--panel-bg);
@@ -95,6 +134,47 @@
   #legend { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
   #legend .row { display: flex; align-items: center; gap: 7px; }
   #legend .swatch { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  #legend .line { width: 16px; height: 0; border-top: 2.5px solid var(--chosen); display: inline-block; flex-shrink: 0; }
+  #legend .line.dashed { border-top-style: dashed; }
+
+  /* Bar au-dessus du graphe : formule de coût du solveur + curseur k, voir
+     computeTimeWeightedCost (src/graph/costing.py) et graph.urgency.
+     TimeWeightParams. Changer k re-solve côté serveur (POST /api/solve, voir
+     visualization/server.py) et met à jour les arêtes choisies en place. */
+  #costBar {
+    padding: 8px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    background: var(--panel-bg); font-size: 12px;
+  }
+  #costBar.hidden { display: none; }
+  .formula {
+    font-family: "Cambria Math", "STIX Two Math", Cambria, "Times New Roman", serif;
+    font-style: italic; font-size: 12.5px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 5px; padding: 6px 9px; white-space: nowrap;
+  }
+  .costBar-params { color: var(--muted); white-space: nowrap; }
+  .costBar-params b, .costBar-params span { color: var(--text); }
+  .costBar-k { display: flex; align-items: center; gap: 8px; margin-left: auto; white-space: nowrap; }
+  .costBar-k label { font-weight: 600; }
+  .costBar-k input[type="range"] { width: 130px; }
+  .costBar-k .k-note { color: var(--muted); font-size: 11px; }
+  .k-status { font-size: 11px; font-style: italic; color: var(--muted); }
+  .k-status.offline { color: var(--neg); }
+  .k-status.saving { color: var(--accent); }
+  .costBar-btn {
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    border-radius: 5px; padding: 5px 10px; cursor: pointer; font-size: 12px; white-space: nowrap;
+  }
+  .costBar-btn:hover { border-color: var(--accent); }
+  .costBar-btn:disabled { opacity: .5; cursor: default; }
+  .approx-note {
+    background: color-mix(in srgb, var(--chosen) 12%, transparent); border: 1px solid var(--chosen);
+    border-radius: 6px; padding: 8px 10px; font-size: 11px; line-height: 1.5; margin: 8px 0 14px;
+  }
+  .approx-tag {
+    font-size: 9.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--chosen);
+    border: 1px solid var(--chosen); border-radius: 8px; padding: 0 5px; margin-left: 4px;
+  }
   #details { border-top: 1px solid var(--border); padding-top: 12px; }
   #details .placeholder { color: var(--muted); }
   #details dl { margin: 0 0 10px; }
@@ -117,7 +197,74 @@
   .hop { font-size: 10.5px; padding: 3px 0; border-left: 2px solid var(--border); padding-left: 8px; margin-bottom: 2px; color: var(--muted); }
   .hop b { color: var(--text); font-weight: 500; }
   .hop .hop-cost { float: right; }
+  .hop .hop-protocol { font-style: italic; }
   .no-paths { color: var(--muted); padding: 8px 0; }
+
+  /* Une couleur par type d'opération (voir --type-* dans :root et
+     web_view.py:_hopKind) : le badge ET le liseré de la ligne portent la
+     même couleur, pour repérer un type d'un coup d'œil sans lire le texte. */
+  .type-tag {
+    display: inline-block; font-size: 9px; text-transform: uppercase; letter-spacing: .02em;
+    border: 1px solid currentColor; border-radius: 8px; padding: 1px 6px; white-space: nowrap;
+  }
+  .type-tag.type-withdraw { color: var(--type-withdraw); }
+  .type-tag.type-deposit { color: var(--type-deposit); }
+  .type-tag.type-on-chain-transfer { color: var(--type-transfer); }
+  .type-tag.type-bridge { color: var(--type-bridge); }
+  .type-tag.type-swap { color: var(--type-swap); }
+  .hop.type-withdraw, .op-row.type-withdraw { border-left-color: var(--type-withdraw); }
+  .hop.type-deposit, .op-row.type-deposit { border-left-color: var(--type-deposit); }
+  .hop.type-on-chain-transfer, .op-row.type-on-chain-transfer { border-left-color: var(--type-transfer); }
+  .hop.type-bridge, .op-row.type-bridge { border-left-color: var(--type-bridge); }
+  .hop.type-swap, .op-row.type-swap { border-left-color: var(--type-swap); }
+
+  .tabbar { display: flex; gap: 4px; }
+  .tab-btn {
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+  }
+  .tab-btn:hover { border-color: var(--accent); color: var(--text); }
+  .tab-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  #exploreView { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  #exploreView.hidden { display: none; }
+
+  #operationsView { flex: 1; display: none; overflow-y: auto; padding: 18px 24px; }
+  #operationsView.active { display: block; }
+  .ops-summary { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 16px; font-size: 12px; color: var(--muted); }
+  .ops-summary b { color: var(--text); font-size: 16px; display: block; margin-top: 2px; }
+  .op-row {
+    display: flex; align-items: center; gap: 12px; padding: 9px 4px 9px 8px;
+    border-bottom: 1px solid var(--border); border-left: 3px solid transparent; font-size: 12.5px;
+  }
+  .op-row .op-type { min-width: 108px; }
+  .op-row .op-route { flex: 1; }
+  .op-row .op-route b { font-weight: 600; }
+  .op-row .op-amount { font-weight: 600; min-width: 90px; text-align: right; }
+  .op-row .op-cost { color: var(--muted); min-width: 80px; text-align: right; }
+  .op-row .op-delay { color: var(--muted); min-width: 60px; text-align: right; }
+  .ops-empty { color: var(--muted); padding: 40px 0; text-align: center; max-width: 420px; margin: 0 auto; }
+
+  #configView { flex: 1; display: none; overflow-y: auto; padding: 18px 24px; }
+  #configView.active { display: block; }
+  .config-hint { color: var(--muted); font-size: 12px; max-width: 640px; margin: 0 0 16px; line-height: 1.5; }
+  .config-table { border-collapse: collapse; width: 100%; max-width: 780px; font-size: 12.5px; }
+  .config-table th {
+    text-align: right; font-weight: 600; color: var(--muted); font-size: 11px;
+    text-transform: uppercase; letter-spacing: .03em; padding: 0 6px 8px; border-bottom: 1px solid var(--border);
+  }
+  .config-table th:first-child, .config-table td:first-child { text-align: left; }
+  .config-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); }
+  .config-table td.cfg-name { font-weight: 600; }
+  .config-table input {
+    width: 90px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--bg); color: var(--text); font-size: 12.5px; text-align: right;
+  }
+  .config-table input:focus { outline: none; border-color: var(--accent); }
+  .config-actions { display: flex; align-items: center; gap: 10px; margin: 18px 0 8px; }
+  .config-status { font-size: 11.5px; color: var(--muted); }
+  .config-status-ok { color: var(--pos); }
+  .config-status-error, .config-status-offline { color: var(--neg); }
 
   #tooltip {
     position: fixed; pointer-events: none; background: var(--panel-bg); color: var(--text);
@@ -130,47 +277,100 @@
 
 <header>
   <h1>Compass — Graph Viewer</h1>
+  <div class="tabbar">
+    <button class="tab-btn active" id="tabExplore">Explore</button>
+    <button class="tab-btn" id="tabOperations">Chosen Operations</button>
+    <button class="tab-btn" id="tabConfig">Config</button>
+  </div>
   <div id="stats"></div>
 </header>
 
-<div id="toolbar">
-  <input type="text" id="search" placeholder="Search a DEX… (Enter to focus)" />
-  <label><input type="checkbox" id="showCosts" /> Show cost labels</label>
-  <div style="display:flex; align-items:center; gap:6px; margin-left:auto;">
-    <button class="zoom-btn" id="zoomOut">−</button>
-    <span id="zoomLabel">100%</span>
-    <button class="zoom-btn" id="zoomIn">+</button>
-    <button class="zoom-btn" id="zoomFit" title="Fit to screen">⤢</button>
+<div id="exploreView">
+  <div id="toolbar">
+    <input type="text" id="search" placeholder="Search a DEX… (Enter to focus)" />
+    <label><input type="checkbox" id="showCosts" /> Show cost labels</label>
+    <div style="display:flex; align-items:center; gap:6px; margin-left:auto;">
+      <button class="zoom-btn" id="zoomOut">−</button>
+      <span id="zoomLabel">100%</span>
+      <button class="zoom-btn" id="zoomIn">+</button>
+      <button class="zoom-btn" id="zoomFit" title="Fit to screen">⤢</button>
+    </div>
+  </div>
+
+  <div id="costBar">
+    <div class="formula">w(e, d) = Fee(e) + λ(σ<sub>d</sub>) · Time(e)</div>
+    <div class="formula">λ(σ<sub>d</sub>) = λ<sub>min</sub> + (λ<sub>max</sub> − λ<sub>min</sub>) · (1 − e<sup>−k / σ<sub>d</sub></sup>)</div>
+    <div class="costBar-params">λ<sub>min</sub> = <span id="lambdaMinVal">–</span> &nbsp; λ<sub>max</sub> = <span id="lambdaMaxVal">–</span></div>
+    <div class="costBar-k">
+      <label for="kSlider">k</label>
+      <input type="range" id="kSlider" min="0.1" max="10" step="0.1" value="2">
+      <b id="kValue">2.00</b>
+      <span class="k-note">Higher k → solver favors faster routes</span>
+      <span id="kStatus" class="k-status"></span>
+    </div>
+    <button id="recomputeBtn" class="costBar-btn" title="Rebuild the graph from scratch — new demo imbalances, same as running `python src/main.py`">↻ Recompute routes</button>
+    <span id="recomputeStatus" class="k-status"></span>
+  </div>
+
+  <div id="main">
+    <div id="canvasWrap">
+      <svg id="graphSvg">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#8b93a1"></path>
+          </marker>
+        </defs>
+        <g id="viewport">
+          <text id="centerMark" x="0" y="14">COMPASS</text>
+          <g id="edgesLayer"></g>
+          <g id="nodesLayer"></g>
+        </g>
+      </svg>
+    </div>
+
+    <div id="sidebar">
+      <h2>Balance</h2>
+      <div id="legend">
+        <div class="row"><span class="swatch" style="background:var(--pos)"></span> Surplus (withdrawable)</div>
+        <div class="row"><span class="swatch" style="background:var(--neg)"></span> Deficit (needs funding)</div>
+        <div class="row"><span class="swatch" style="background:var(--zero)"></span> Balanced</div>
+        <div class="row"><span class="line"></span> Chosen by solver (click to inspect)</div>
+        <div class="row"><span class="line dashed"></span> ...through a merge/split point (approximate)</div>
+      </div>
+      <div id="details">
+        <h2>Details</h2>
+        <div class="placeholder">Click a DEX to inspect it — balance, accepted stablecoins, supported chains, and the cheapest routing path to every other DEX.</div>
+      </div>
+    </div>
   </div>
 </div>
 
-<div id="main">
-  <div id="canvasWrap">
-    <svg id="graphSvg">
-      <defs>
-        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
-          <path d="M0,0 L10,5 L0,10 z" fill="#8b93a1"></path>
-        </marker>
-      </defs>
-      <g id="viewport">
-        <text id="centerMark" x="0" y="14">COMPASS</text>
-        <g id="edgesLayer"></g>
-        <g id="nodesLayer"></g>
-      </g>
-    </svg>
-  </div>
+<div id="operationsView">
+  <div class="ops-summary" id="opsSummary"></div>
+  <div id="opsList"></div>
+</div>
 
-  <div id="sidebar">
-    <h2>Balance</h2>
-    <div id="legend">
-      <div class="row"><span class="swatch" style="background:var(--pos)"></span> Surplus (withdrawable)</div>
-      <div class="row"><span class="swatch" style="background:var(--neg)"></span> Deficit (needs funding)</div>
-      <div class="row"><span class="swatch" style="background:var(--zero)"></span> Balanced</div>
-    </div>
-    <div id="details">
-      <h2>Details</h2>
-      <div class="placeholder">Click a DEX to inspect it — balance, accepted stablecoins, supported chains, and the cheapest routing path to every other DEX.</div>
-    </div>
+<div id="configView">
+  <p class="config-hint">
+    Frais et délais opérationnels de dépôt/retrait par DEX (pas encore câblés dans
+    le coût du solveur). Les modifications sont enregistrées directement dans
+    <code>connectors/dex_operational_params.json</code> côté serveur dès que vous
+    quittez un champ — inutile d'avoir accès au code pour les changer.
+  </p>
+  <table class="config-table">
+    <thead>
+      <tr>
+        <th>DEX</th>
+        <th>Withdraw fee (USD)</th>
+        <th>Withdraw delay (s)</th>
+        <th>Deposit fee (USD)</th>
+        <th>Deposit delay (s)</th>
+      </tr>
+    </thead>
+    <tbody id="configBody"></tbody>
+  </table>
+  <div class="config-actions">
+    <span class="config-status" id="configStatus"></span>
   </div>
 </div>
 
@@ -181,6 +381,7 @@ const GRAPH_DATA = __GRAPH_DATA_JSON__;
 
 const MIN_R = 16, MAX_R = 34, MIN_ARC_SPACING = 70;
 const SVG_NS = "http://www.w3.org/2000/svg";
+const XLINK_NS = "http://www.w3.org/1999/xlink";
 
 const dexByName = new Map(GRAPH_DATA.dexNodes.map(d => [d.name, d]));
 const dexById = new Map(GRAPH_DATA.dexNodes.map(d => [d.id, d]));
@@ -217,17 +418,63 @@ document.getElementById("centerMark").setAttribute("font-size", Math.max(18, rin
 const pathEdges = [];
 for (const [fromName, targets] of Object.entries(GRAPH_DATA.paths)) {
   for (const [toName, path] of Object.entries(targets)) {
-    pathEdges.push({ from: fromName, to: toName, cost: path.totalCost, hops: path.hops });
+    pathEdges.push({ from: fromName, to: toName, cost: path.totalCost, time: path.totalTime, hops: path.hops });
   }
 }
 const maxCost = Math.max(1e-9, ...pathEdges.map(e => e.cost));
 
+// Trajets DEX -> DEX réellement choisis par le solveur (edge.flow > 0),
+// décomposés côté Python dans visualization/journeys.py — potentiellement
+// plusieurs par paire si le solveur les a répartis sur des hops distincts.
+// `plausible` marque un trajet dont l'attribution source/destination n'est
+// qu'une explication parmi d'autres compatibles avec le même flot agrégé
+// (voir Journey.plausible dans journeys.py).
+const journeysByPair = new Map();
+for (const j of GRAPH_DATA.journeys) {
+  const key = `${j.from}→${j.to}`;
+  if (!journeysByPair.has(key)) journeysByPair.set(key, []);
+  journeysByPair.get(key).push(j);
+}
+
 function fmt(x) {
   if (x === null || x === undefined) return "–";
-  return Math.abs(x) >= 1000 ? x.toFixed(0) : x.toFixed(2);
+  const abs = Math.abs(x);
+  if (abs === 0) return "0.00";
+  if (abs >= 1000) return x.toFixed(0);
+  if (abs >= 1) return x.toFixed(2);
+  // Sub-$1 values (e.g. on-chain transfer gas costs, often a fraction of a
+  // cent) : a flat toFixed(2) rounds every single one of them to "0.00",
+  // making a real, live-fetched cost indistinguishable from a missing one.
+  // Scale decimals to the value's magnitude instead, so the first two
+  // significant digits always show (capped at 6 decimals).
+  const decimals = Math.min(6, 1 - Math.floor(Math.log10(abs)));
+  return x.toFixed(decimals);
 }
 function fmtSigned(x) {
   return (x > 0 ? "+" : "") + fmt(x);
+}
+function fmtDuration(seconds) {
+  const s = Math.round(seconds || 0);
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m}m${(s % 60).toString().padStart(2, "0")}s` : `${s}s`;
+}
+// Une couleur par type d'opération (Withdraw/Deposit/On-chain transfer/
+// Bridge/Swap) — voir --type-* dans :root et web_view.py:_hopKind, qui
+// calcule `type` côté Python. `typeSlug` sert aussi à teinter le liseré de
+// la ligne entière (.hop/.op-row), pas seulement le badge.
+function typeSlug(type) {
+  return type ? type.toLowerCase().replace(/[^a-z]+/g, "-") : "";
+}
+function typeTag(type) {
+  return type ? `<span class="type-tag type-${typeSlug(type)}">${type}</span>` : "";
+}
+function hopHtml(h) {
+  // A cross-chain move is one hop here (entry/cross/exit already merged
+  // server-side, see web_view.py:_buildHopList) — h.protocol names which
+  // bridge protocol the solver actually picked for it (GENERIC / CCTP V1 /
+  // CCTP V2), null for any non-Bridge hop.
+  const protocol = h.protocol ? ` <span class="hop-protocol">via ${h.protocol}</span>` : "";
+  return `<div class="hop type-${typeSlug(h.type)}">${typeTag(h.type)} <span class="hop-cost">${fmt(h.cost)} · ${fmtDuration(h.time)}</span><b>${h.from}</b> → ${h.to}${protocol}</div>`;
 }
 
 function edgeGeometry(a, b) {
@@ -243,6 +490,33 @@ function edgeGeometry(a, b) {
   return { sx, sy, ex, ey, mx, my };
 }
 
+// Chapelet de points animés le long d'une arête "chosen", du DEX source vers
+// le DEX destination (sens naturel du path SVG : M sx,sy -> ex,ey) — façon
+// L2Beat. `speedFactor` étire dur/décalage pour les longues arêtes plutôt que
+// de faire filer les points plus vite dessus qu'ailleurs.
+function createFlowDots(pathId, speedFactor = 1) {
+  const count = 3;
+  const dur = (2.2 * speedFactor).toFixed(2);
+  const g = document.createElementNS(SVG_NS, "g");
+  g.setAttribute("class", "flow-dots");
+  for (let i = 0; i < count; i++) {
+    const dot = document.createElementNS(SVG_NS, "circle");
+    dot.setAttribute("class", "flow-dot");
+    dot.setAttribute("r", "1.8");
+    const anim = document.createElementNS(SVG_NS, "animateMotion");
+    anim.setAttribute("dur", `${dur}s`);
+    anim.setAttribute("repeatCount", "indefinite");
+    anim.setAttribute("begin", `${(-(i / count) * dur).toFixed(2)}s`);
+    const mpath = document.createElementNS(SVG_NS, "mpath");
+    mpath.setAttributeNS(XLINK_NS, "xlink:href", `#${pathId}`);
+    mpath.setAttribute("href", `#${pathId}`);
+    anim.appendChild(mpath);
+    dot.appendChild(anim);
+    g.appendChild(dot);
+  }
+  return g;
+}
+
 const svg = document.getElementById("graphSvg");
 const viewport = document.getElementById("viewport");
 const edgesLayer = document.getElementById("edgesLayer");
@@ -250,13 +524,16 @@ const nodesLayer = document.getElementById("nodesLayer");
 const canvasWrap = document.getElementById("canvasWrap");
 const tooltip = document.getElementById("tooltip");
 
+let edgeCounter = 0;
 const edgeElements = [];
 for (const e of pathEdges) {
   const a = dexByName.get(e.from), b = dexByName.get(e.to);
   const { sx, sy, mx, my, ex, ey } = edgeGeometry(a, b);
   const weight = 1 - e.cost / maxCost;
 
+  const pathId = `edge-path-${edgeCounter++}`;
   const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("id", pathId);
   path.setAttribute("d", `M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}`);
   path.setAttribute("class", "edge");
   path.setAttribute("marker-end", "url(#arrow)");
@@ -264,6 +541,15 @@ for (const e of pathEdges) {
   path.style.opacity = (0.12 + weight * 0.35).toFixed(2);
   path.dataset.from = e.from;
   path.dataset.to = e.to;
+
+  // `state.journeys` (pas une const capturée) : mutable en place par
+  // refreshFromSolveResult quand un nouveau k re-solve le graphe côté
+  // serveur, sans avoir à redessiner ni rebrancher les listeners de l'edge.
+  const state = { journeys: journeysByPair.get(`${e.from}→${e.to}`) || null };
+  if (state.journeys) {
+    path.classList.add("chosen");
+    path.classList.toggle("approximate", state.journeys.some(j => j.plausible));
+  }
 
   const label = document.createElementNS(SVG_NS, "text");
   label.setAttribute("class", "edge-label hidden");
@@ -274,11 +560,28 @@ for (const e of pathEdges) {
 
   edgesLayer.appendChild(path);
   edgesLayer.appendChild(label);
-  edgeElements.push({ e, path, label });
 
-  path.addEventListener("mouseenter", (ev) => showTooltip(ev, edgeTooltipHtml(e)));
-  path.addEventListener("mousemove", positionTooltip);
-  path.addEventListener("mouseleave", hideTooltip);
+  // Toujours créées (même arête pas encore choisie) : un k re-solvé côté
+  // serveur peut faire basculer n'importe quelle arête en "chosen" sans
+  // recharger la page, voir refreshFromSolveResult.
+  const pathLength = Math.hypot(ex - sx, ey - sy);
+  const dots = createFlowDots(pathId, Math.max(0.6, pathLength / 260));
+  dots.classList.toggle("hidden", !state.journeys);
+  edgesLayer.appendChild(dots);
+
+  // Hitbox invisible bien plus large que le trait visible (voir .edge-hit) :
+  // porte tous les listeners, ajoutée en dernier pour rester au-dessus.
+  const hitPath = document.createElementNS(SVG_NS, "path");
+  hitPath.setAttribute("d", `M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}`);
+  hitPath.setAttribute("class", "edge-hit clickable");
+  edgesLayer.appendChild(hitPath);
+
+  edgeElements.push({ e, path, label, dots, state });
+
+  hitPath.addEventListener("mouseenter", (ev) => { path.classList.add("hover"); showTooltip(ev, edgeTooltipHtml(e, state.journeys)); });
+  hitPath.addEventListener("mousemove", positionTooltip);
+  hitPath.addEventListener("mouseleave", () => { path.classList.remove("hover"); hideTooltip(); });
+  hitPath.addEventListener("click", (ev) => { ev.stopPropagation(); selectEdge(e, state.journeys); });
 }
 
 const nodeElements = new Map();
@@ -288,13 +591,50 @@ for (const dex of GRAPH_DATA.dexNodes) {
   g.setAttribute("transform", `translate(${dex.cx}, ${dex.cy})`);
   g.dataset.name = dex.name;
 
+  // Fond = couleur de marque du DEX (teinte dominante extraite de son logo,
+  // voir visualization/dex_branding.py) ; l'anneau reste la couleur de
+  // solde (surplus/déficit/équilibré) pour ne pas perdre ce signal quand on
+  // y superpose l'identité visuelle — inspiré du rendu des icônes L2Beat.
+  const brandColor = dex.brandColor || `var(--${sign(dex)})`;
   const circle = document.createElementNS(SVG_NS, "circle");
   circle.setAttribute("r", dex.r);
-  circle.style.fill = `var(--${sign(dex)})`;
-  circle.style.fillOpacity = "0.28";
+  circle.style.fill = brandColor;
+  circle.style.fillOpacity = dex.logo ? "0.18" : "0.28";
   circle.style.stroke = `var(--${sign(dex)})`;
   circle.style.strokeWidth = "1.6";
   g.appendChild(circle);
+
+  if (dex.logo) {
+    const clipId = `logo-clip-${dex.id}`;
+    const clipPath = document.createElementNS(SVG_NS, "clipPath");
+    clipPath.setAttribute("id", clipId);
+    const clipCircle = document.createElementNS(SVG_NS, "circle");
+    clipCircle.setAttribute("r", dex.r - 1.5);
+    clipPath.appendChild(clipCircle);
+    g.appendChild(clipPath);
+
+    const logoSize = dex.r * 1.55;
+    const image = document.createElementNS(SVG_NS, "image");
+    image.setAttributeNS(XLINK_NS, "xlink:href", dex.logo);
+    image.setAttribute("href", dex.logo);
+    image.setAttribute("x", -logoSize / 2);
+    image.setAttribute("y", -logoSize / 2);
+    image.setAttribute("width", logoSize);
+    image.setAttribute("height", logoSize);
+    image.setAttribute("preserveAspectRatio", "xMidYMid slice");
+    image.setAttribute("clip-path", `url(#${clipId})`);
+    image.style.pointerEvents = "none";
+    g.appendChild(image);
+  } else {
+    // Pas de branding pour ce DEX (voir _dexNodeDict côté Python) : repli
+    // sur un monogramme plutôt qu'un cercle vide.
+    const monogram = document.createElementNS(SVG_NS, "text");
+    monogram.setAttribute("class", "node-monogram");
+    monogram.setAttribute("y", 4);
+    monogram.setAttribute("text-anchor", "middle");
+    monogram.textContent = (dex.name.match(/[A-Za-z]/g) || ["?"]).slice(0, 2).join("").toUpperCase();
+    g.appendChild(monogram);
+  }
 
   const label = document.createElementNS(SVG_NS, "text");
   label.setAttribute("y", -dex.r - 8);
@@ -304,7 +644,7 @@ for (const dex of GRAPH_DATA.dexNodes) {
 
   const sub = document.createElementNS(SVG_NS, "text");
   sub.setAttribute("class", `sublabel ${sign(dex)}`);
-  sub.setAttribute("y", 4);
+  sub.setAttribute("y", dex.r + 16);
   sub.setAttribute("text-anchor", "middle");
   sub.textContent = fmtSigned(dex.inbalance);
   g.appendChild(sub);
@@ -324,17 +664,25 @@ function nodeTooltipHtml(dex) {
           <div>stables: ${dex.stables.join(", ") || "–"}</div>
           <div>chains: ${dex.chains.length}</div>`;
 }
-function edgeTooltipHtml(e) {
-  return `<div><b>${e.from}</b> → <b>${e.to}</b></div><div>cheapest route cost: ${fmt(e.cost)}</div>`;
+function edgeTooltipHtml(e, journeys) {
+  let html = `<div><b>${e.from}</b> → <b>${e.to}</b></div><div>cheapest route cost: ${fmt(e.cost)} · ${fmtDuration(e.time)}</div>`;
+  if (journeys) {
+    const total = journeys.reduce((s, j) => s + j.amount, 0);
+    const approx = journeys.some(j => j.plausible);
+    html += `<div style="margin-top:4px;color:var(--chosen)"><b>Chosen by solver:</b> ${fmt(total)} moved${approx ? " (approximate)" : ""}</div>`;
+  }
+  return html;
 }
 function showTooltip(ev, html) { tooltip.innerHTML = html; tooltip.style.display = "block"; positionTooltip(ev); }
 function positionTooltip(ev) { tooltip.style.left = (ev.clientX + 14) + "px"; tooltip.style.top = (ev.clientY + 14) + "px"; }
 function hideTooltip() { tooltip.style.display = "none"; }
 
 let selectedName = null;
+let selectedEdgeKey = null;
 
 function clearSelection() {
   selectedName = null;
+  selectedEdgeKey = null;
   document.querySelectorAll(".node.selected").forEach(e => e.classList.remove("selected"));
   document.querySelectorAll(".dimmed").forEach(e => e.classList.remove("dimmed"));
   document.querySelectorAll(".edge.highlight").forEach(e => e.classList.remove("highlight"));
@@ -352,15 +700,13 @@ function renderDexDetails(dex) {
   const chainChips = dex.chains.map(c => `<span class="chip">${c}</span>`).join("");
 
   const rows = Object.entries(targets).sort((a, b) => a[1].totalCost - b[1].totalCost).map(([toName, path]) => {
-    const hops = path.hops.map(h =>
-      `<div class="hop"><span class="hop-cost">${fmt(h.cost)}</span><b>${h.from}</b> → ${h.to}</div>`
-    ).join("") || `<div class="hop">direct — no intermediate hop</div>`;
+    const hops = path.hops.map(hopHtml).join("") || `<div class="hop">direct — no intermediate hop</div>`;
     return `
       <div class="path-row">
         <div class="path-head" data-target="${toName}">
           <span class="chevron">▶</span>
           <span class="name" data-nav="${toName}">${toName}</span>
-          <span class="cost">${fmt(path.totalCost)}</span>
+          <span class="cost">${fmt(path.totalCost)} · ${fmtDuration(path.totalTime)}</span>
         </div>
         <div class="path-hops">${hops}</div>
       </div>`;
@@ -402,15 +748,179 @@ function selectDex(name) {
 
   const connected = new Set([name, ...Object.keys(GRAPH_DATA.paths[name] || {})]);
   for (const [n, el] of nodeElements) el.classList.toggle("dimmed", !connected.has(n));
-  for (const { e, path, label } of edgeElements) {
+  for (const { e, path, label, dots } of edgeElements) {
     const isOutgoing = e.from === name;
     path.classList.toggle("dimmed", !isOutgoing);
     label.classList.toggle("dimmed", !isOutgoing && !label.classList.contains("hidden"));
+    if (dots) dots.classList.toggle("dimmed", !isOutgoing);
     if (isOutgoing) path.classList.add("highlight");
   }
 
   renderDexDetails(dex);
 }
+
+function selectEdge(e, journeys) {
+  clearSelection();
+  selectedEdgeKey = `${e.from}→${e.to}`;
+  for (const [n, el] of nodeElements) el.classList.toggle("dimmed", n !== e.from && n !== e.to);
+  for (const { e: other, path, label, dots } of edgeElements) {
+    const isThis = other.from === e.from && other.to === e.to;
+    path.classList.toggle("dimmed", !isThis);
+    label.classList.toggle("dimmed", !isThis && !label.classList.contains("hidden"));
+    if (dots) dots.classList.toggle("dimmed", !isThis);
+    if (isThis) path.classList.add("highlight");
+  }
+  renderEdgeDetails(e, journeys);
+}
+
+function renderEdgeDetails(e, journeys) {
+  const hops = e.hops.map(hopHtml).join("") || `<div class="hop">direct — no intermediate hop</div>`;
+
+  let journeySection = "";
+  if (journeys) {
+    const totalAmount = journeys.reduce((s, j) => s + j.amount, 0);
+    const anyApprox = journeys.some(j => j.plausible);
+    const journeyBlocks = journeys.map(j => {
+      const jHops = j.hops.map(hopHtml).join("") || `<div class="hop">direct — no intermediate hop</div>`;
+      return `
+        <div class="path-row">
+          <div class="path-head expanded" style="cursor:default">
+            <span style="flex:1">${fmt(j.amount)} moved${j.plausible ? `<span class="approx-tag">approximate</span>` : ""}</span>
+            <span class="cost">${fmt(j.totalCost)} · ${fmtDuration(j.totalTime)}</span>
+          </div>
+          <div class="path-hops expanded">${jHops}</div>
+        </div>`;
+    }).join("");
+    journeySection = `
+      <h2>Chosen by the solver</h2>
+      <dl><dt>Total moved</dt><dd>${fmt(totalAmount)}</dd></dl>
+      ${anyApprox ? `<div class="approx-note">Part of this route crosses a point where the solver's flow merges with money from other DEXes and later splits again — the hop-by-hop split shown below is one valid explanation of the solver's total, not necessarily the exact one.</div>` : ""}
+      ${journeyBlocks}`;
+  }
+
+  document.getElementById("details").innerHTML = `
+    <h2>Details</h2>
+    <dl>
+      <dt>Route</dt><dd>${e.from} → ${e.to}</dd>
+      <dt>Estimated cost</dt><dd>${fmt(e.cost)}$</dd>
+      <dt>Estimated time</dt><dd>${fmtDuration(e.time)}</dd>
+    </dl>
+    <h2>Hops</h2>
+    ${hops}
+    ${journeySection}`;
+}
+
+// Paramètres λ(σ_d) réellement utilisés par le solveur (voir graph.urgency.
+// TimeWeightParams, câblés dans main.py) — GRAPH_DATA.timeWeight est absent
+// si le graphe a été construit sans time-weighting.
+const kSlider = document.getElementById("kSlider");
+const kValueEl = document.getElementById("kValue");
+const kStatusEl = document.getElementById("kStatus");
+let kSolveInFlight = false;
+let kSolvePending = null;
+
+function renderCostBarParams() {
+  const tw = GRAPH_DATA.timeWeight;
+  document.getElementById("costBar").classList.toggle("hidden", !tw);
+  if (!tw) return;
+  document.getElementById("lambdaMinVal").textContent = fmt(tw.lambdaMin);
+  document.getElementById("lambdaMaxVal").textContent = fmt(tw.lambdaMax);
+  kSlider.value = tw.k;
+  kValueEl.textContent = fmt(tw.k);
+}
+renderCostBarParams();
+
+// Recalcule ce que dépend du plan choisi par le solveur (Fee/Time par arête
+// ne dépendent PAS de k, voir costing.py — seule l'arête choisie en dépend)
+// après un POST /api/solve réussi, en place, sans recharger la page ni
+// retoucher aux nodes/paths Dijkstra (inchangés).
+function refreshFromSolveResult(data) {
+  GRAPH_DATA.operations = data.operations;
+  GRAPH_DATA.journeys = data.journeys;
+  GRAPH_DATA.timeWeight = data.timeWeight;
+
+  journeysByPair.clear();
+  for (const j of GRAPH_DATA.journeys) {
+    const key = `${j.from}→${j.to}`;
+    if (!journeysByPair.has(key)) journeysByPair.set(key, []);
+    journeysByPair.get(key).push(j);
+  }
+
+  for (const el of edgeElements) {
+    const key = `${el.e.from}→${el.e.to}`;
+    const journeys = journeysByPair.get(key) || null;
+    el.state.journeys = journeys;
+    el.path.classList.toggle("chosen", !!journeys);
+    el.path.classList.toggle("approximate", !!journeys && journeys.some(j => j.plausible));
+    el.dots.classList.toggle("hidden", !journeys);
+  }
+
+  opsSummaryData = operationsSummary();
+  renderStats();
+  renderOperations();
+  renderCostBarParams();
+
+  if (selectedEdgeKey) {
+    const el = edgeElements.find(x => `${x.e.from}→${x.e.to}` === selectedEdgeKey);
+    if (el) selectEdge(el.e, el.state.journeys);
+  }
+}
+
+async function requestSolve(k) {
+  if (kSolveInFlight) { kSolvePending = k; return; }
+  kSolveInFlight = true;
+  kStatusEl.textContent = "Solving…";
+  kStatusEl.className = "k-status saving";
+  try {
+    const res = await fetch("/api/solve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ k }),
+    });
+    if (!res.ok) throw new Error("solve failed");
+    refreshFromSolveResult(await res.json());
+    kStatusEl.textContent = "";
+  } catch (e) {
+    kStatusEl.textContent = "Not connected to the solve server — dragging k won't recompute routes. Serve this page with `python -m visualization.server`.";
+    kStatusEl.className = "k-status offline";
+  } finally {
+    kSolveInFlight = false;
+    if (kSolvePending !== null) {
+      const next = kSolvePending;
+      kSolvePending = null;
+      requestSolve(next);
+    }
+  }
+}
+
+let kDebounceTimer = null;
+kSlider.addEventListener("input", () => {
+  kValueEl.textContent = fmt(parseFloat(kSlider.value));
+  clearTimeout(kDebounceTimer);
+  kDebounceTimer = setTimeout(() => requestSolve(parseFloat(kSlider.value)), 250);
+});
+
+// Reconstruit tout le graphe from scratch côté serveur (nouveaux
+// déséquilibres aléatoires de démo, k remis à sa valeur par défaut — voir
+// main.buildAndSolveGraph et POST /api/recompute) : contrairement au curseur
+// k, ça change dexNodes/paths (les balances changent), donc un patch DOM en
+// place ne suffit pas — on recharge la page servie fraîchement re-rendue.
+const recomputeBtn = document.getElementById("recomputeBtn");
+const recomputeStatusEl = document.getElementById("recomputeStatus");
+recomputeBtn.addEventListener("click", async () => {
+  recomputeBtn.disabled = true;
+  recomputeStatusEl.textContent = "Recomputing… (rebuilding demo imbalances, a few seconds)";
+  recomputeStatusEl.className = "k-status saving";
+  try {
+    const res = await fetch("/api/recompute", { method: "POST" });
+    if (!res.ok) throw new Error("recompute failed");
+    window.location.reload();
+  } catch (e) {
+    recomputeStatusEl.textContent = "Not connected to the solve server — can't recompute. Serve this page with `python -m visualization.server`.";
+    recomputeStatusEl.className = "k-status offline";
+    recomputeBtn.disabled = false;
+  }
+});
 
 svg.addEventListener("click", clearSelection);
 
@@ -492,12 +1002,181 @@ document.getElementById("zoomFit").addEventListener("click", fitToScreen);
 
 const reachablePairs = pathEdges.length;
 const totalPairs = GRAPH_DATA.dexNodes.length * (GRAPH_DATA.dexNodes.length - 1);
-document.getElementById("stats").innerHTML = `
-  <span><b>${GRAPH_DATA.dexNodes.length}</b> DEXes</span>
-  <span><b>${reachablePairs}</b> / ${totalPairs} routes reachable</span>`;
+
+// Résumé du plan réellement choisi par le solveur CP-SAT (edge.flow > 0),
+// pas l'estimation Dijkstra par paire montrée dans l'onglet Explore. Partagé
+// entre le header (visible sur tous les onglets) et l'onglet "Chosen
+// Operations" (voir renderOperations) pour ne calculer qu'une seule fois.
+function operationsSummary() {
+  const ops = GRAPH_DATA.operations;
+  if (ops.length === 0) return null;
+  return {
+    count: ops.length,
+    totalAmount: ops.reduce((s, o) => s + o.amount, 0),
+    totalCost: ops.reduce((s, o) => s + o.cost, 0),
+    // Approximation volontaire : le plus long délai parmi tous les hops
+    // choisis, pas la somme des hops le long d'une chaîne (un vrai chemin
+    // critique demanderait de rejouer la décomposition en journeys par
+    // chaîne — voir visualization/journeys.py — plutôt que ce max global).
+    totalTime: Math.max(0, ...ops.map(o => o.time || 0)),
+  };
+}
+
+let opsSummaryData = operationsSummary();
+function renderStats() {
+  document.getElementById("stats").innerHTML = `
+    <span><b>${GRAPH_DATA.dexNodes.length}</b> DEXes</span>
+    <span><b>${reachablePairs}</b> / ${totalPairs} routes reachable</span>` + (opsSummaryData ? `
+    <span><b>${opsSummaryData.count}</b> chosen operations</span>
+    <span><b>$${fmt(opsSummaryData.totalAmount)}</b> moved</span>
+    <span><b>$${fmt(opsSummaryData.totalCost)}</b> fees</span>
+    <span title="Longest single hop among the chosen operations, not the sum along a chain"><b>${fmtDuration(opsSummaryData.totalTime)}</b> est. total time</span>` : "");
+}
+renderStats();
 
 requestAnimationFrame(fitToScreen);
 window.addEventListener("resize", fitToScreen);
+
+function renderOperations() {
+  const ops = GRAPH_DATA.operations;
+  const opsSummary = document.getElementById("opsSummary");
+  const opsList = document.getElementById("opsList");
+
+  if (!opsSummaryData) {
+    opsSummary.innerHTML = "";
+    opsList.innerHTML = `<div class="ops-empty">No rebalancing operations chosen by the solver — every DEX balance is currently zero (target/balance data isn't wired in yet).</div>`;
+    return;
+  }
+
+  opsSummary.innerHTML = `
+    <div>Operations<b>${opsSummaryData.count}</b></div>
+    <div>Total moved<b>$${fmt(opsSummaryData.totalAmount)}</b></div>
+    <div>Total fees<b>$${fmt(opsSummaryData.totalCost)}</b></div>
+    <div title="Longest single hop among the chosen operations, not the sum along a chain">Est. total time<b>${fmtDuration(opsSummaryData.totalTime)}</b></div>`;
+
+  opsList.innerHTML = ops.map(o => `
+    <div class="op-row type-${typeSlug(o.type)}">
+      <span class="op-type">${typeTag(o.type)}</span>
+      <span class="op-route"><b>${o.from}</b> → ${o.to}${o.protocol ? ` <span class="hop-protocol">via ${o.protocol}</span>` : ""}</span>
+      <span class="op-amount">${fmt(o.amount)}</span>
+      <span class="op-cost">${fmt(o.cost)}</span>
+      <span class="op-delay">${o.time ? o.time.toFixed(0) + "s" : "–"}</span>
+    </div>`).join("");
+}
+renderOperations();
+
+function switchTab(name) {
+  document.getElementById("exploreView").classList.toggle("hidden", name !== "explore");
+  document.getElementById("operationsView").classList.toggle("active", name === "operations");
+  document.getElementById("configView").classList.toggle("active", name === "config");
+  document.getElementById("tabExplore").classList.toggle("active", name === "explore");
+  document.getElementById("tabOperations").classList.toggle("active", name === "operations");
+  document.getElementById("tabConfig").classList.toggle("active", name === "config");
+  if (name === "explore") requestAnimationFrame(fitToScreen);
+}
+document.getElementById("tabExplore").addEventListener("click", () => switchTab("explore"));
+document.getElementById("tabOperations").addEventListener("click", () => switchTab("operations"));
+document.getElementById("tabConfig").addEventListener("click", () => switchTab("config"));
+
+// Panel "Config" : édition des frais/délais de dépôt/retrait par DEX,
+// enregistrée directement dans connectors/dex_operational_params.json via le
+// serveur de visualization/server.py (GET/POST /api/config) — plus de
+// copier-coller de JSON, quelqu'un qui n'a que cette page en production peut
+// modifier la config sans toucher au code. localStorage ne sert plus que de
+// repli : page ouverte en fichier local sans serveur, ou serveur injoignable.
+const CONFIG_STORAGE_KEY = "compass_dex_operational_params";
+const CONFIG_FIELDS = ["withdrawFeeUsd", "withdrawDelaySeconds", "depositFeeUsd", "depositDelaySeconds"];
+
+function loadStoredConfig() {
+  try {
+    const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+}
+function saveStoredConfig(config) {
+  try {
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(config));
+  } catch (e) {
+    // Repli best-effort seulement (quota dépassé, mode privé, ...) : rien à
+    // faire, la source de vérité reste le serveur.
+  }
+}
+
+const dexConfig = {};
+let configServerAvailable = true;
+
+function buildDexConfig(overrides) {
+  for (const dex of GRAPH_DATA.dexNodes) {
+    const defaults = { withdrawFeeUsd: 0, withdrawDelaySeconds: 0, depositFeeUsd: 0, depositDelaySeconds: 0 };
+    dexConfig[dex.name] = Object.assign(defaults, dex.operationalParams || {}, overrides[dex.name] || {});
+  }
+}
+
+function setConfigStatus(text, cssClass) {
+  const el = document.getElementById("configStatus");
+  el.textContent = text;
+  el.className = "config-status" + (cssClass ? " " + cssClass : "");
+}
+
+async function initDexConfig() {
+  try {
+    const res = await fetch("/api/config");
+    if (!res.ok) throw new Error("bad response");
+    buildDexConfig(await res.json());
+    saveStoredConfig(dexConfig); // repli à jour si le serveur devient injoignable plus tard
+  } catch (e) {
+    configServerAvailable = false;
+    buildDexConfig(loadStoredConfig());
+    setConfigStatus(
+      "Not connected to the config server — showing this browser's last known values, edits won't be saved. Serve this page with `python -m visualization.server`.",
+      "config-status-offline"
+    );
+  }
+  renderConfig();
+}
+
+let saveTimer = null;
+async function persistConfig() {
+  saveStoredConfig(dexConfig);
+  if (!configServerAvailable) return;
+  setConfigStatus("Saving…");
+  try {
+    const res = await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dexConfig),
+    });
+    if (!res.ok) throw new Error("save failed");
+    setConfigStatus("Saved", "config-status-ok");
+  } catch (e) {
+    setConfigStatus("Save failed — check the config server", "config-status-error");
+  }
+}
+
+function renderConfig() {
+  const names = GRAPH_DATA.dexNodes.map(d => d.name).sort();
+  document.getElementById("configBody").innerHTML = names.map(name => {
+    const c = dexConfig[name];
+    const cells = CONFIG_FIELDS.map(field =>
+      `<td><input type="number" step="any" data-field="${field}" value="${c[field]}"></td>`
+    ).join("");
+    return `<tr data-dex="${name}"><td class="cfg-name">${name}</td>${cells}</tr>`;
+  }).join("");
+
+  document.getElementById("configBody").querySelectorAll("input").forEach(input => {
+    input.addEventListener("input", () => {
+      const name = input.closest("tr").dataset.dex;
+      const value = parseFloat(input.value);
+      dexConfig[name][input.dataset.field] = Number.isFinite(value) ? value : 0;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(persistConfig, 400);
+    });
+  });
+}
+
+initDexConfig();
 </script>
 </body>
 </html>

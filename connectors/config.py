@@ -12,6 +12,16 @@ ZFUND_PASSWORD = os.getenv("ZFUND_PASSWORD")
 ALCHEMY_API_KEY = os.getenv("ALCHEMY_API_KEY")
 ALCHEMY_RATE_LIMIT_PER_SECOND = float(os.getenv("ALCHEMY_RATE_LIMIT_PER_SECOND", "25"))
 
+# Calibration de λ(σ_d), le poids du temps dans le coût d'arête du solveur de
+# routing (voir graph.urgency.TimeWeightParams) : λ_min = régime normal,
+# λ_max = urgence de liquidation maximale, k = raideur de la transition (zone
+# critique typique σ ∈ [1, 3]). Time(e) est une latence absolue en secondes,
+# donc λ s'exprime en USD/seconde pour rester comparable à Fee(e) (USD).
+TIME_WEIGHT_LAMBDA_MIN = float(os.getenv("TIME_WEIGHT_LAMBDA_MIN", "0.0"))
+TIME_WEIGHT_LAMBDA_MAX = float(os.getenv("TIME_WEIGHT_LAMBDA_MAX", "1.0"))
+TIME_WEIGHT_K = float(os.getenv("TIME_WEIGHT_K", "2.0"))
+TIME_WEIGHT_EPSILON = float(os.getenv("TIME_WEIGHT_EPSILON", "0.1"))
+
 
 def require_alchemy_api_key() -> str:
     if not ALCHEMY_API_KEY:

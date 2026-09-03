@@ -1,7 +1,16 @@
 from __future__ import annotations
 
-import matplotlib.pyplot as plt
-import networkx as nx
+import matplotlib
+
+# Backend non interactif : renderGraph() est appelé depuis un thread de
+# requête Flask par visualization/server.py (POST /api/recompute), et le
+# backend GUI par défaut de matplotlib refuse de créer une figure hors du
+# thread principal ("Cannot create a GUI FigureManager outside the main
+# thread"). Sans effet sur l'usage CLI (show=False par défaut, voir plus bas).
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt  # noqa: E402
+import networkx as nx  # noqa: E402
 
 from graph.edge import Edge
 from graph.graph import Graph
@@ -120,6 +129,9 @@ if __name__ == "__main__":
             pass
 
         def get_gas_cost_usd(self, chain, operation) -> float:
+            return 1.0
+
+        def get_bridge_gas_cost_usd(self, source_chain, destination_chain, stable, protocol) -> float:
             return 1.0
 
     dexA = DEX([Chain.ETHEREUM, Chain.BASE], [Stable.USDC])

@@ -5,7 +5,7 @@ from connectors.gas import GasFeeService
 from graph import costing
 from graph.edge import Edge
 from graph.node import BridgeNode, DepositNode, Node, NodeType, SourceNode, SwapNode, WithdrawNode
-from graph.structures.bridges import Bridge, buildBridgeList
+from graph.structures.bridges import Bridge, availableBridgeProtocols, buildBridgeList
 from graph.structures.DEXes import DEX, Chain, Stable
 from graph.structures.swap import SwapVenue
 
@@ -28,6 +28,7 @@ class Graph:
         self._addSourcesBridges()
         self._linkBridges()
         self.computeAllCosts()
+        self.computeAllDelays()
 
     def _addSourceAndDepositNodes(self, dexList: list[DEX]) -> None:
         for dex in dexList:
@@ -92,10 +93,14 @@ class Graph:
         # convertit jamais : arête seulement entre deux bridges de la MÊME
         # stable, sur des chains différentes (graphe complet par stable, une
         # arête dirigée par sens : A->B et B->A sont deux edges distincts).
+        # Une edge PAR PROTOCOLE disponible sur cette route (GENERIC toujours,
+        # +CCTP_V1/V2 quand la route les supporte) : autant d'options
+        # parallèles que le solveur peut arbitrer par coût, voir costing.py.
         for bridgeA, bridgeB in itertools.permutations(bridgeNodes, 2):
             if bridgeA.stable != bridgeB.stable:
                 continue
-            self.edgeList.append(Edge(bridgeA, bridgeB))
+            for protocol in availableBridgeProtocols(bridgeA.chain, bridgeB.chain, bridgeA.stable):
+                self.edgeList.append(Edge(bridgeA, bridgeB, bridgeProtocol=protocol))
 
         # Un deposit peut envoyer vers le bridge de sa chain/stable si son DEX a
         # du surplus à évacuer pour cette stable ; il peut recevoir depuis le
@@ -132,6 +137,19 @@ class Graph:
     def computeAllCosts(self) -> None:
         for edge in self.edgeList:
             edge.cost = costing.computeCost(edge, self._gasFeeService)
+
+    def computeAllDelays(self) -> None:
+        for edge in self.edgeList:
+            edge.time = costing.computeDelay(edge)
+
+    def deficitDexes(self) -> list[DEX]:
+        """Une commodité par DEX destination déficitaire (SourceNode.balance < 0),
+        dans l'ordre où elles ont été ajoutées au graphe."""
+        return [
+            cast(SourceNode, node).dex
+            for node in self.nodeList
+            if node.type == NodeType.SourceNode and cast(SourceNode, node).balance < 0
+        ]
 
     def computeAllCapacities(self) -> None:
         # Borne "infinie" pour les arêtes non contraintes par un excédent/déficit

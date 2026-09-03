@@ -118,6 +118,33 @@ class AlchemyConnector:
         result = self._rpc(chain, "eth_gasPrice", [])
         return int(result, 16) / 1e9
 
+    def get_block_number(self, chain: Chain) -> int:
+        result = self._rpc(chain, "eth_blockNumber", [])
+        return int(result, 16)
+
+    def get_block_timestamp(self, chain: Chain, block_number: int) -> int:
+        result = self._rpc(chain, "eth_getBlockByNumber", [hex(block_number), False])
+        if result is None:
+            raise ConnectorAPIError("AlchemyConnector", self._network_url(chain), f"block {block_number} not found")
+        return int(result["timestamp"], 16)
+
+    def get_block_time_seconds(self, chain: Chain, block_lookback: int = 100) -> float:
+        """Temps de bloc moyen mesuré en live sur les `block_lookback` derniers
+        blocks (timestamp du block courant moins timestamp du block
+        block_lookback plus tôt, divisé par le nombre de blocks) — même
+        logique que SolanaRPCConnector.get_slot_time_ms pour Solana."""
+        latest_number = self.get_block_number(chain)
+        older_number = max(latest_number - block_lookback, 0)
+        blocks_elapsed = latest_number - older_number
+        if blocks_elapsed == 0:
+            raise ConnectorAPIError(
+                "AlchemyConnector", self._network_url(chain), "not enough block history to measure block time"
+            )
+
+        latest_timestamp = self.get_block_timestamp(chain, latest_number)
+        older_timestamp = self.get_block_timestamp(chain, older_number)
+        return (latest_timestamp - older_timestamp) / blocks_elapsed
+
     def get_usd_price(self, chain: Chain) -> float:
         symbol = get_metadata(chain).native_symbol
 
@@ -146,6 +173,13 @@ class AlchemyConnector:
 
         self._price_cache[symbol] = (price, time.monotonic())
         return price
+
+    def estimate_gas(self, chain: Chain, call_object: dict, state_override: dict | None = None) -> int:
+        params: list = [call_object, "latest"]
+        if state_override is not None:
+            params.append(state_override)
+        result = self._rpc(chain, "eth_estimateGas", params)
+        return int(result, 16)
 
     def get_gas_cost(self, chain: Chain, gas_limit: int) -> GasCost:
         gas_price_gwei = self.get_gas_price_gwei(chain)

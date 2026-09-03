@@ -14,6 +14,16 @@
     --pos: #2fae5e;
     --neg: #e05252;
     --zero: #8b93a1;
+    --chosen: #d97706;
+    /* Une couleur par type d'opération (voir web_view.py:_hopKind) : distingue
+       d'un coup d'œil, dans la liste comme dans les hops détaillés, Withdraw/
+       Deposit (comptabilité interne à un DEX, jamais de mouvement de fonds
+       entre deux parties) d'On-chain transfer/Bridge/Swap (mouvement réel). */
+    --type-withdraw: #c2410c;
+    --type-deposit: #0d9488;
+    --type-transfer: #2563eb;
+    --type-bridge: #d97706;
+    --type-swap: #9333ea;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -25,6 +35,12 @@
       --accent: #5b9bff;
       --pos: #3ecb72;
       --neg: #ff6b6b;
+      --chosen: #fbbf24;
+      --type-withdraw: #fb923c;
+      --type-deposit: #2dd4bf;
+      --type-transfer: #60a5fa;
+      --type-bridge: #fbbf24;
+      --type-swap: #c084fc;
     }
   }
   * { box-sizing: border-box; }
@@ -75,17 +91,40 @@
   .node .sublabel.pos { fill: var(--pos); }
   .node .sublabel.neg { fill: var(--neg); }
   .node .sublabel.zero { fill: var(--muted); }
+  .node .node-monogram { font-size: 13px; font-weight: 700; letter-spacing: .02em; }
   .node.search-match circle { stroke: #ffb703; stroke-width: 3; }
   .node.selected circle { stroke: var(--accent); stroke-width: 3; }
   .node.dimmed circle, .node.dimmed text { opacity: .15; }
 
-  .edge { fill: none; stroke: #8b93a1; transition: opacity .15s, stroke-width .15s; }
+  .edge { fill: none; stroke: #8b93a1; pointer-events: none; transition: opacity .15s, stroke-width .15s; }
   .edge.hidden { display: none; }
   .edge.dimmed { opacity: .04 !important; }
   .edge.highlight { stroke: var(--accent) !important; stroke-width: 2.6 !important; opacity: .95 !important; }
+  /* Trajet réellement choisi par le solveur (voir GRAPH_DATA.journeys) : distinct
+     de .edge.highlight (survol/clic), qui peut se combiner par-dessus. La ligne
+     reste discrète — c'est le flux de points (.flow-dot) qui porte l'attention,
+     façon L2Beat, plutôt qu'un halo permanent sur le trait. */
+  .edge.chosen { stroke: var(--chosen); }
+  .edge.chosen.approximate { stroke-dasharray: 6 3; }
+  .edge.chosen.highlight { stroke: var(--chosen) !important; stroke-width: 3.2 !important; opacity: 1 !important; }
+  /* Léger feedback visuel au survol de la hitbox élargie (.edge-hit) : sans
+     ça, la zone cliquable (14px) déborde largement du trait visible (souvent
+     <1px) et le tooltip semblerait surgir "de nulle part". */
+  .edge.hover:not(.highlight) { opacity: .9 !important; stroke-width: 2.2 !important; }
+  /* Hitbox invisible, bien plus large que le trait dessiné (.edge) : porte
+     tous les listeners (survol/clic), voir la boucle de création des edges. */
+  .edge-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; }
+  .edge-hit.clickable { cursor: pointer; }
   .edge-label { font-size: 8px; fill: var(--muted); pointer-events: none; transition: opacity .15s; }
   .edge-label.hidden { display: none; }
   .edge-label.dimmed { opacity: .04 !important; }
+
+  /* Points animés le long d'une arête "chosen" (voir createFlowDots) : figure
+     le sens réel du flux, DEX source -> DEX destination. */
+  .flow-dot { fill: var(--chosen); }
+  .flow-dots { transition: opacity .15s; pointer-events: none; }
+  .flow-dots.dimmed { opacity: 0 !important; }
+  .flow-dots.hidden { display: none; }
 
   #sidebar {
     width: 320px; border-left: 1px solid var(--border); background: var(--panel-bg);
@@ -95,6 +134,47 @@
   #legend { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
   #legend .row { display: flex; align-items: center; gap: 7px; }
   #legend .swatch { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  #legend .line { width: 16px; height: 0; border-top: 2.5px solid var(--chosen); display: inline-block; flex-shrink: 0; }
+  #legend .line.dashed { border-top-style: dashed; }
+
+  /* Bar au-dessus du graphe : formule de coût du solveur + curseur k, voir
+     computeTimeWeightedCost (src/graph/costing.py) et graph.urgency.
+     TimeWeightParams. Changer k re-solve côté serveur (POST /api/solve, voir
+     visualization/server.py) et met à jour les arêtes choisies en place. */
+  #costBar {
+    padding: 8px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    background: var(--panel-bg); font-size: 12px;
+  }
+  #costBar.hidden { display: none; }
+  .formula {
+    font-family: "Cambria Math", "STIX Two Math", Cambria, "Times New Roman", serif;
+    font-style: italic; font-size: 12.5px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 5px; padding: 6px 9px; white-space: nowrap;
+  }
+  .costBar-params { color: var(--muted); white-space: nowrap; }
+  .costBar-params b, .costBar-params span { color: var(--text); }
+  .costBar-k { display: flex; align-items: center; gap: 8px; margin-left: auto; white-space: nowrap; }
+  .costBar-k label { font-weight: 600; }
+  .costBar-k input[type="range"] { width: 130px; }
+  .costBar-k .k-note { color: var(--muted); font-size: 11px; }
+  .k-status { font-size: 11px; font-style: italic; color: var(--muted); }
+  .k-status.offline { color: var(--neg); }
+  .k-status.saving { color: var(--accent); }
+  .costBar-btn {
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    border-radius: 5px; padding: 5px 10px; cursor: pointer; font-size: 12px; white-space: nowrap;
+  }
+  .costBar-btn:hover { border-color: var(--accent); }
+  .costBar-btn:disabled { opacity: .5; cursor: default; }
+  .approx-note {
+    background: color-mix(in srgb, var(--chosen) 12%, transparent); border: 1px solid var(--chosen);
+    border-radius: 6px; padding: 8px 10px; font-size: 11px; line-height: 1.5; margin: 8px 0 14px;
+  }
+  .approx-tag {
+    font-size: 9.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--chosen);
+    border: 1px solid var(--chosen); border-radius: 8px; padding: 0 5px; margin-left: 4px;
+  }
   #details { border-top: 1px solid var(--border); padding-top: 12px; }
   #details .placeholder { color: var(--muted); }
   #details dl { margin: 0 0 10px; }
@@ -117,7 +197,74 @@
   .hop { font-size: 10.5px; padding: 3px 0; border-left: 2px solid var(--border); padding-left: 8px; margin-bottom: 2px; color: var(--muted); }
   .hop b { color: var(--text); font-weight: 500; }
   .hop .hop-cost { float: right; }
+  .hop .hop-protocol { font-style: italic; }
   .no-paths { color: var(--muted); padding: 8px 0; }
+
+  /* Une couleur par type d'opération (voir --type-* dans :root et
+     web_view.py:_hopKind) : le badge ET le liseré de la ligne portent la
+     même couleur, pour repérer un type d'un coup d'œil sans lire le texte. */
+  .type-tag {
+    display: inline-block; font-size: 9px; text-transform: uppercase; letter-spacing: .02em;
+    border: 1px solid currentColor; border-radius: 8px; padding: 1px 6px; white-space: nowrap;
+  }
+  .type-tag.type-withdraw { color: var(--type-withdraw); }
+  .type-tag.type-deposit { color: var(--type-deposit); }
+  .type-tag.type-on-chain-transfer { color: var(--type-transfer); }
+  .type-tag.type-bridge { color: var(--type-bridge); }
+  .type-tag.type-swap { color: var(--type-swap); }
+  .hop.type-withdraw, .op-row.type-withdraw { border-left-color: var(--type-withdraw); }
+  .hop.type-deposit, .op-row.type-deposit { border-left-color: var(--type-deposit); }
+  .hop.type-on-chain-transfer, .op-row.type-on-chain-transfer { border-left-color: var(--type-transfer); }
+  .hop.type-bridge, .op-row.type-bridge { border-left-color: var(--type-bridge); }
+  .hop.type-swap, .op-row.type-swap { border-left-color: var(--type-swap); }
+
+  .tabbar { display: flex; gap: 4px; }
+  .tab-btn {
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+  }
+  .tab-btn:hover { border-color: var(--accent); color: var(--text); }
+  .tab-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  #exploreView { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  #exploreView.hidden { display: none; }
+
+  #operationsView { flex: 1; display: none; overflow-y: auto; padding: 18px 24px; }
+  #operationsView.active { display: block; }
+  .ops-summary { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 16px; font-size: 12px; color: var(--muted); }
+  .ops-summary b { color: var(--text); font-size: 16px; display: block; margin-top: 2px; }
+  .op-row {
+    display: flex; align-items: center; gap: 12px; padding: 9px 4px 9px 8px;
+    border-bottom: 1px solid var(--border); border-left: 3px solid transparent; font-size: 12.5px;
+  }
+  .op-row .op-type { min-width: 108px; }
+  .op-row .op-route { flex: 1; }
+  .op-row .op-route b { font-weight: 600; }
+  .op-row .op-amount { font-weight: 600; min-width: 90px; text-align: right; }
+  .op-row .op-cost { color: var(--muted); min-width: 80px; text-align: right; }
+  .op-row .op-delay { color: var(--muted); min-width: 60px; text-align: right; }
+  .ops-empty { color: var(--muted); padding: 40px 0; text-align: center; max-width: 420px; margin: 0 auto; }
+
+  #configView { flex: 1; display: none; overflow-y: auto; padding: 18px 24px; }
+  #configView.active { display: block; }
+  .config-hint { color: var(--muted); font-size: 12px; max-width: 640px; margin: 0 0 16px; line-height: 1.5; }
+  .config-table { border-collapse: collapse; width: 100%; max-width: 780px; font-size: 12.5px; }
+  .config-table th {
+    text-align: right; font-weight: 600; color: var(--muted); font-size: 11px;
+    text-transform: uppercase; letter-spacing: .03em; padding: 0 6px 8px; border-bottom: 1px solid var(--border);
+  }
+  .config-table th:first-child, .config-table td:first-child { text-align: left; }
+  .config-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); }
+  .config-table td.cfg-name { font-weight: 600; }
+  .config-table input {
+    width: 90px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--bg); color: var(--text); font-size: 12.5px; text-align: right;
+  }
+  .config-table input:focus { outline: none; border-color: var(--accent); }
+  .config-actions { display: flex; align-items: center; gap: 10px; margin: 18px 0 8px; }
+  .config-status { font-size: 11.5px; color: var(--muted); }
+  .config-status-ok { color: var(--pos); }
+  .config-status-error, .config-status-offline { color: var(--neg); }
 
   #tooltip {
     position: fixed; pointer-events: none; background: var(--panel-bg); color: var(--text);
@@ -130,57 +277,111 @@
 
 <header>
   <h1>Compass — Graph Viewer</h1>
+  <div class="tabbar">
+    <button class="tab-btn active" id="tabExplore">Explore</button>
+    <button class="tab-btn" id="tabOperations">Chosen Operations</button>
+    <button class="tab-btn" id="tabConfig">Config</button>
+  </div>
   <div id="stats"></div>
 </header>
 
-<div id="toolbar">
-  <input type="text" id="search" placeholder="Search a DEX… (Enter to focus)" />
-  <label><input type="checkbox" id="showCosts" /> Show cost labels</label>
-  <div style="display:flex; align-items:center; gap:6px; margin-left:auto;">
-    <button class="zoom-btn" id="zoomOut">−</button>
-    <span id="zoomLabel">100%</span>
-    <button class="zoom-btn" id="zoomIn">+</button>
-    <button class="zoom-btn" id="zoomFit" title="Fit to screen">⤢</button>
+<div id="exploreView">
+  <div id="toolbar">
+    <input type="text" id="search" placeholder="Search a DEX… (Enter to focus)" />
+    <label><input type="checkbox" id="showCosts" /> Show cost labels</label>
+    <div style="display:flex; align-items:center; gap:6px; margin-left:auto;">
+      <button class="zoom-btn" id="zoomOut">−</button>
+      <span id="zoomLabel">100%</span>
+      <button class="zoom-btn" id="zoomIn">+</button>
+      <button class="zoom-btn" id="zoomFit" title="Fit to screen">⤢</button>
+    </div>
+  </div>
+
+  <div id="costBar">
+    <div class="formula">w(e, d) = Fee(e) + λ(σ<sub>d</sub>) · Time(e)</div>
+    <div class="formula">λ(σ<sub>d</sub>) = λ<sub>min</sub> + (λ<sub>max</sub> − λ<sub>min</sub>) · (1 − e<sup>−k / σ<sub>d</sub></sup>)</div>
+    <div class="costBar-params">λ<sub>min</sub> = <span id="lambdaMinVal">–</span> &nbsp; λ<sub>max</sub> = <span id="lambdaMaxVal">–</span></div>
+    <div class="costBar-k">
+      <label for="kSlider">k</label>
+      <input type="range" id="kSlider" min="0.1" max="10" step="0.1" value="2">
+      <b id="kValue">2.00</b>
+      <span class="k-note">Higher k → solver favors faster routes</span>
+      <span id="kStatus" class="k-status"></span>
+    </div>
+    <button id="recomputeBtn" class="costBar-btn" title="Rebuild the graph from scratch — new demo imbalances, same as running `python src/main.py`">↻ Recompute routes</button>
+    <span id="recomputeStatus" class="k-status"></span>
+  </div>
+
+  <div id="main">
+    <div id="canvasWrap">
+      <svg id="graphSvg">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#8b93a1"></path>
+          </marker>
+        </defs>
+        <g id="viewport">
+          <text id="centerMark" x="0" y="14">COMPASS</text>
+          <g id="edgesLayer"></g>
+          <g id="nodesLayer"></g>
+        </g>
+      </svg>
+    </div>
+
+    <div id="sidebar">
+      <h2>Balance</h2>
+      <div id="legend">
+        <div class="row"><span class="swatch" style="background:var(--pos)"></span> Surplus (withdrawable)</div>
+        <div class="row"><span class="swatch" style="background:var(--neg)"></span> Deficit (needs funding)</div>
+        <div class="row"><span class="swatch" style="background:var(--zero)"></span> Balanced</div>
+        <div class="row"><span class="line"></span> Chosen by solver (click to inspect)</div>
+        <div class="row"><span class="line dashed"></span> ...through a merge/split point (approximate)</div>
+      </div>
+      <div id="details">
+        <h2>Details</h2>
+        <div class="placeholder">Click a DEX to inspect it — balance, accepted stablecoins, supported chains, and the cheapest routing path to every other DEX.</div>
+      </div>
+    </div>
   </div>
 </div>
 
-<div id="main">
-  <div id="canvasWrap">
-    <svg id="graphSvg">
-      <defs>
-        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
-          <path d="M0,0 L10,5 L0,10 z" fill="#8b93a1"></path>
-        </marker>
-      </defs>
-      <g id="viewport">
-        <text id="centerMark" x="0" y="14">COMPASS</text>
-        <g id="edgesLayer"></g>
-        <g id="nodesLayer"></g>
-      </g>
-    </svg>
-  </div>
+<div id="operationsView">
+  <div class="ops-summary" id="opsSummary"></div>
+  <div id="opsList"></div>
+</div>
 
-  <div id="sidebar">
-    <h2>Balance</h2>
-    <div id="legend">
-      <div class="row"><span class="swatch" style="background:var(--pos)"></span> Surplus (withdrawable)</div>
-      <div class="row"><span class="swatch" style="background:var(--neg)"></span> Deficit (needs funding)</div>
-      <div class="row"><span class="swatch" style="background:var(--zero)"></span> Balanced</div>
-    </div>
-    <div id="details">
-      <h2>Details</h2>
-      <div class="placeholder">Click a DEX to inspect it — balance, accepted stablecoins, supported chains, and the cheapest routing path to every other DEX.</div>
-    </div>
+<div id="configView">
+  <p class="config-hint">
+    Frais et délais opérationnels de dépôt/retrait par DEX (pas encore câblés dans
+    le coût du solveur). Les modifications sont enregistrées directement dans
+    <code>connectors/dex_operational_params.json</code> côté serveur dès que vous
+    quittez un champ — inutile d'avoir accès au code pour les changer.
+  </p>
+  <table class="config-table">
+    <thead>
+      <tr>
+        <th>DEX</th>
+        <th>Withdraw fee (USD)</th>
+        <th>Withdraw delay (s)</th>
+        <th>Deposit fee (USD)</th>
+        <th>Deposit delay (s)</th>
+      </tr>
+    </thead>
+    <tbody id="configBody"></tbody>
+  </table>
+  <div class="config-actions">
+    <span class="config-status" id="configStatus"></span>
   </div>
 </div>
 
 <div id="tooltip"></div>
 
 <script>
-const GRAPH_DATA = {"dexNodes": [{"id": 0, "name": "Aden", "inbalance": 50, "stables": ["USDT", "USDC"], "chains": ["ETHEREUM", "BSC", "SOLANA"], "withdrawBalances": {"USDT": 50}}, {"id": 9, "name": "Aster", "inbalance": -44, "stables": ["USDT", "USDC"], "chains": ["BSC", "ETHEREUM", "ARBITRUM", "SOLANA"], "withdrawBalances": {}}, {"id": 20, "name": "dYdX", "inbalance": 60, "stables": ["USDC"], "chains": ["ETHEREUM", "ARBITRUM", "OPTIMISM", "BASE", "POLYGON", "AVALANCHE"], "withdrawBalances": {"USDC": 60}}, {"id": 28, "name": "Extended", "inbalance": -52, "stables": ["USDC"], "chains": ["ARBITRUM", "ETHEREUM", "BASE", "BSC", "AVALANCHE", "POLYGON"], "withdrawBalances": {}}, {"id": 36, "name": "Gate (Perp DEX)", "inbalance": 70, "stables": ["USDT"], "chains": ["SOLANA", "ETHEREUM", "BSC", "BASE"], "withdrawBalances": {"USDT": 70}}, {"id": 42, "name": "Hyperliquid", "inbalance": -60, "stables": ["USDC"], "chains": ["ARBITRUM"], "withdrawBalances": {}}, {"id": 45, "name": "Lighter", "inbalance": 80, "stables": ["USDC"], "chains": ["ARBITRUM", "BASE", "AVALANCHE"], "withdrawBalances": {"USDC": 80}}, {"id": 50, "name": "MEXC", "inbalance": -68, "stables": ["USDT", "USDC"], "chains": ["ETHEREUM", "ARBITRUM", "SOLANA", "BSC", "POLYGON", "BASE", "OPTIMISM", "AVALANCHE"], "withdrawBalances": {}}, {"id": 69, "name": "Ondo Perps", "inbalance": 0, "stables": [], "chains": ["ETHEREUM"], "withdrawBalances": {}}, {"id": 70, "name": "Pacifica", "inbalance": -76, "stables": ["USDC"], "chains": ["SOLANA"], "withdrawBalances": {}}, {"id": 73, "name": "Reya", "inbalance": 100, "stables": ["USDC"], "chains": ["ETHEREUM", "ARBITRUM"], "withdrawBalances": {"USDC": 100}}], "paths": {"Aden": {"Aster": {"totalCost": 0.5, "hops": [{"from": "Aden withdraw (USDT)", "to": "Aden deposit BSC/USDT", "cost": 0.0}, {"from": "Aden deposit BSC/USDT", "to": "Aster deposit BSC/USDT", "cost": 0.5}, {"from": "Aster deposit BSC/USDT", "to": "Aster", "cost": 0.0}]}, "Extended": {"totalCost": 1.5, "hops": [{"from": "Aden withdraw (USDT)", "to": "Aden deposit ETHEREUM/USDT", "cost": 0.0}, {"from": "Aden deposit ETHEREUM/USDT", "to": "Bridge ETHEREUM/USDT", "cost": 0.5}, {"from": "Bridge ETHEREUM/USDT", "to": "Swap USDT->USDC (ETHEREUM)", "cost": 0.5}, {"from": "Swap USDT->USDC (ETHEREUM)", "to": "Bridge ETHEREUM/USDC", "cost": 0.0}, {"from": "Bridge ETHEREUM/USDC", "to": "Extended deposit ETHEREUM/USDC", "cost": 0.5}, {"from": "Extended deposit ETHEREUM/USDC", "to": "Extended", "cost": 0.0}]}, "Hyperliquid": {"totalCost": 2.0, "hops": [{"from": "Aden withdraw (USDT)", "to": "Aden deposit ETHEREUM/USDT", "cost": 0.0}, {"from": "Aden deposit ETHEREUM/USDT", "to": "Bridge ETHEREUM/USDT", "cost": 0.5}, {"from": "Bridge ETHEREUM/USDT", "to": "Swap USDT->USDC (ETHEREUM)", "cost": 0.5}, {"from": "Swap USDT->USDC (ETHEREUM)", "to": "Bridge ETHEREUM/USDC", "cost": 0.0}, {"from": "Bridge ETHEREUM/USDC", "to": "Bridge ARBITRUM/USDC", "cost": 0.5}, {"from": "Bridge ARBITRUM/USDC", "to": "Hyperliquid deposit ARBITRUM/USDC", "cost": 0.5}, {"from": "Hyperliquid deposit ARBITRUM/USDC", "to": "Hyperliquid", "cost": 0.0}]}, "MEXC": {"totalCost": 0.5, "hops": [{"from": "Aden withdraw (USDT)", "to": "Aden deposit ETHEREUM/USDT", "cost": 0.0}, {"from": "Aden deposit ETHEREUM/USDT", "to": "MEXC deposit ETHEREUM/USDT", "cost": 0.5}, {"from": "MEXC deposit ETHEREUM/USDT", "to": "MEXC", "cost": 0.0}]}, "Pacifica": {"totalCost": 1.5, "hops": [{"from": "Aden withdraw (USDT)", "to": "Aden deposit SOLANA/USDT", "cost": 0.0}, {"from": "Aden deposit SOLANA/USDT", "to": "Bridge SOLANA/USDT", "cost": 0.5}, {"from": "Bridge SOLANA/USDT", "to": "Swap USDT->USDC (SOLANA)", "cost": 0.5}, {"from": "Swap USDT->USDC (SOLANA)", "to": "Bridge SOLANA/USDC", "cost": 0.0}, {"from": "Bridge SOLANA/USDC", "to": "Pacifica deposit SOLANA/USDC", "cost": 0.5}, {"from": "Pacifica deposit SOLANA/USDC", "to": "Pacifica", "cost": 0.0}]}}, "Aster": {}, "dYdX": {"Aster": {"totalCost": 0.5, "hops": [{"from": "dYdX withdraw (USDC)", "to": "dYdX deposit ETHEREUM/USDC", "cost": 0.0}, {"from": "dYdX deposit ETHEREUM/USDC", "to": "Aster deposit ETHEREUM/USDC", "cost": 0.5}, {"from": "Aster deposit ETHEREUM/USDC", "to": "Aster", "cost": 0.0}]}, "Extended": {"totalCost": 0.5, "hops": [{"from": "dYdX withdraw (USDC)", "to": "dYdX deposit ARBITRUM/USDC", "cost": 0.0}, {"from": "dYdX deposit ARBITRUM/USDC", "to": "Extended deposit ARBITRUM/USDC", "cost": 0.5}, {"from": "Extended deposit ARBITRUM/USDC", "to": "Extended", "cost": 0.0}]}, "Hyperliquid": {"totalCost": 0.5, "hops": [{"from": "dYdX withdraw (USDC)", "to": "dYdX deposit ARBITRUM/USDC", "cost": 0.0}, {"from": "dYdX deposit ARBITRUM/USDC", "to": "Hyperliquid deposit ARBITRUM/USDC", "cost": 0.5}, {"from": "Hyperliquid deposit ARBITRUM/USDC", "to": "Hyperliquid", "cost": 0.0}]}, "MEXC": {"totalCost": 0.5, "hops": [{"from": "dYdX withdraw (USDC)", "to": "dYdX deposit ETHEREUM/USDC", "cost": 0.0}, {"from": "dYdX deposit ETHEREUM/USDC", "to": "MEXC deposit ETHEREUM/USDC", "cost": 0.5}, {"from": "MEXC deposit ETHEREUM/USDC", "to": "MEXC", "cost": 0.0}]}, "Pacifica": {"totalCost": 1.5, "hops": [{"from": "dYdX withdraw (USDC)", "to": "dYdX deposit ETHEREUM/USDC", "cost": 0.0}, {"from": "dYdX deposit ETHEREUM/USDC", "to": "Bridge ETHEREUM/USDC", "cost": 0.5}, {"from": "Bridge ETHEREUM/USDC", "to": "Bridge SOLANA/USDC", "cost": 0.5}, {"from": "Bridge SOLANA/USDC", "to": "Pacifica deposit SOLANA/USDC", "cost": 0.5}, {"from": "Pacifica deposit SOLANA/USDC", "to": "Pacifica", "cost": 0.0}]}}, "Extended": {}, "Gate (Perp DEX)": {"Aster": {"totalCost": 0.5, "hops": [{"from": "Gate (Perp DEX) withdraw (USDT)", "to": "Gate (Perp DEX) deposit BSC/USDT", "cost": 0.0}, {"from": "Gate (Perp DEX) deposit BSC/USDT", "to": "Aster deposit BSC/USDT", "cost": 0.5}, {"from": "Aster deposit BSC/USDT", "to": "Aster", "cost": 0.0}]}, "Extended": {"totalCost": 1.5, "hops": [{"from": "Gate (Perp DEX) withdraw (USDT)", "to": "Gate (Perp DEX) deposit ETHEREUM/USDT", "cost": 0.0}, {"from": "Gate (Perp DEX) deposit ETHEREUM/USDT", "to": "Bridge ETHEREUM/USDT", "cost": 0.5}, {"from": "Bridge ETHEREUM/USDT", "to": "Swap USDT->USDC (ETHEREUM)", "cost": 0.5}, {"from": "Swap USDT->USDC (ETHEREUM)", "to": "Bridge ETHEREUM/USDC", "cost": 0.0}, {"from": "Bridge ETHEREUM/USDC", "to": "Extended deposit ETHEREUM/USDC", "cost": 0.5}, {"from": "Extended deposit ETHEREUM/USDC", "to": "Extended", "cost": 0.0}]}, "Hyperliquid": {"totalCost": 2.0, "hops": [{"from": "Gate (Perp DEX) withdraw (USDT)", "to": "Gate (Perp DEX) deposit ETHEREUM/USDT", "cost": 0.0}, {"from": "Gate (Perp DEX) deposit ETHEREUM/USDT", "to": "Bridge ETHEREUM/USDT", "cost": 0.5}, {"from": "Bridge ETHEREUM/USDT", "to": "Swap USDT->USDC (ETHEREUM)", "cost": 0.5}, {"from": "Swap USDT->USDC (ETHEREUM)", "to": "Bridge ETHEREUM/USDC", "cost": 0.0}, {"from": "Bridge ETHEREUM/USDC", "to": "Bridge ARBITRUM/USDC", "cost": 0.5}, {"from": "Bridge ARBITRUM/USDC", "to": "Hyperliquid deposit ARBITRUM/USDC", "cost": 0.5}, {"from": "Hyperliquid deposit ARBITRUM/USDC", "to": "Hyperliquid", "cost": 0.0}]}, "MEXC": {"totalCost": 0.5, "hops": [{"from": "Gate (Perp DEX) withdraw (USDT)", "to": "Gate (Perp DEX) deposit ETHEREUM/USDT", "cost": 0.0}, {"from": "Gate (Perp DEX) deposit ETHEREUM/USDT", "to": "MEXC deposit ETHEREUM/USDT", "cost": 0.5}, {"from": "MEXC deposit ETHEREUM/USDT", "to": "MEXC", "cost": 0.0}]}, "Pacifica": {"totalCost": 1.5, "hops": [{"from": "Gate (Perp DEX) withdraw (USDT)", "to": "Gate (Perp DEX) deposit SOLANA/USDT", "cost": 0.0}, {"from": "Gate (Perp DEX) deposit SOLANA/USDT", "to": "Bridge SOLANA/USDT", "cost": 0.5}, {"from": "Bridge SOLANA/USDT", "to": "Swap USDT->USDC (SOLANA)", "cost": 0.5}, {"from": "Swap USDT->USDC (SOLANA)", "to": "Bridge SOLANA/USDC", "cost": 0.0}, {"from": "Bridge SOLANA/USDC", "to": "Pacifica deposit SOLANA/USDC", "cost": 0.5}, {"from": "Pacifica deposit SOLANA/USDC", "to": "Pacifica", "cost": 0.0}]}}, "Hyperliquid": {}, "Lighter": {"Aster": {"totalCost": 0.5, "hops": [{"from": "Lighter withdraw (USDC)", "to": "Lighter deposit ARBITRUM/USDC", "cost": 0.0}, {"from": "Lighter deposit ARBITRUM/USDC", "to": "Aster deposit ARBITRUM/USDC", "cost": 0.5}, {"from": "Aster deposit ARBITRUM/USDC", "to": "Aster", "cost": 0.0}]}, "Extended": {"totalCost": 0.5, "hops": [{"from": "Lighter withdraw (USDC)", "to": "Lighter deposit ARBITRUM/USDC", "cost": 0.0}, {"from": "Lighter deposit ARBITRUM/USDC", "to": "Extended deposit ARBITRUM/USDC", "cost": 0.5}, {"from": "Extended deposit ARBITRUM/USDC", "to": "Extended", "cost": 0.0}]}, "Hyperliquid": {"totalCost": 0.5, "hops": [{"from": "Lighter withdraw (USDC)", "to": "Lighter deposit ARBITRUM/USDC", "cost": 0.0}, {"from": "Lighter deposit ARBITRUM/USDC", "to": "Hyperliquid deposit ARBITRUM/USDC", "cost": 0.5}, {"from": "Hyperliquid deposit ARBITRUM/USDC", "to": "Hyperliquid", "cost": 0.0}]}, "MEXC": {"totalCost": 0.5, "hops": [{"from": "Lighter withdraw (USDC)", "to": "Lighter deposit ARBITRUM/USDC", "cost": 0.0}, {"from": "Lighter deposit ARBITRUM/USDC", "to": "MEXC deposit ARBITRUM/USDC", "cost": 0.5}, {"from": "MEXC deposit ARBITRUM/USDC", "to": "MEXC", "cost": 0.0}]}, "Pacifica": {"totalCost": 1.5, "hops": [{"from": "Lighter withdraw (USDC)", "to": "Lighter deposit ARBITRUM/USDC", "cost": 0.0}, {"from": "Lighter deposit ARBITRUM/USDC", "to": "Bridge ARBITRUM/USDC", "cost": 0.5}, {"from": "Bridge ARBITRUM/USDC", "to": "Bridge SOLANA/USDC", "cost": 0.5}, {"from": "Bridge SOLANA/USDC", "to": "Pacifica deposit SOLANA/USDC", "cost": 0.5}, {"from": "Pacifica deposit SOLANA/USDC", "to": "Pacifica", "cost": 0.0}]}}, "MEXC": {}, "Ondo Perps": {}, "Pacifica": {}, "Reya": {"Aster": {"totalCost": 0.5, "hops": [{"from": "Reya withdraw (USDC)", "to": "Reya deposit ETHEREUM/USDC", "cost": 0.0}, {"from": "Reya deposit ETHEREUM/USDC", "to": "Aster deposit ETHEREUM/USDC", "cost": 0.5}, {"from": "Aster deposit ETHEREUM/USDC", "to": "Aster", "cost": 0.0}]}, "Extended": {"totalCost": 0.5, "hops": [{"from": "Reya withdraw (USDC)", "to": "Reya deposit ARBITRUM/USDC", "cost": 0.0}, {"from": "Reya deposit ARBITRUM/USDC", "to": "Extended deposit ARBITRUM/USDC", "cost": 0.5}, {"from": "Extended deposit ARBITRUM/USDC", "to": "Extended", "cost": 0.0}]}, "Hyperliquid": {"totalCost": 0.5, "hops": [{"from": "Reya withdraw (USDC)", "to": "Reya deposit ARBITRUM/USDC", "cost": 0.0}, {"from": "Reya deposit ARBITRUM/USDC", "to": "Hyperliquid deposit ARBITRUM/USDC", "cost": 0.5}, {"from": "Hyperliquid deposit ARBITRUM/USDC", "to": "Hyperliquid", "cost": 0.0}]}, "MEXC": {"totalCost": 0.5, "hops": [{"from": "Reya withdraw (USDC)", "to": "Reya deposit ETHEREUM/USDC", "cost": 0.0}, {"from": "Reya deposit ETHEREUM/USDC", "to": "MEXC deposit ETHEREUM/USDC", "cost": 0.5}, {"from": "MEXC deposit ETHEREUM/USDC", "to": "MEXC", "cost": 0.0}]}, "Pacifica": {"totalCost": 1.5, "hops": [{"from": "Reya withdraw (USDC)", "to": "Reya deposit ETHEREUM/USDC", "cost": 0.0}, {"from": "Reya deposit ETHEREUM/USDC", "to": "Bridge ETHEREUM/USDC", "cost": 0.5}, {"from": "Bridge ETHEREUM/USDC", "to": "Bridge SOLANA/USDC", "cost": 0.5}, {"from": "Bridge SOLANA/USDC", "to": "Pacifica deposit SOLANA/USDC", "cost": 0.5}, {"from": "Pacifica deposit SOLANA/USDC", "to": "Pacifica", "cost": 0.0}]}}}};
+const GRAPH_DATA = {"dexNodes": [{"id": 0, "name": "Aden", "inbalance": -2572.71, "stables": ["USDT"], "chains": ["ETHEREUM", "BSC", "SOLANA"], "withdrawBalances": {}, "logo": "data:image/webp;base64,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", "brandColor": "#fd9e28", "operationalParams": {"withdrawFeeUsd": 1.0, "withdrawDelaySeconds": 300.0, "depositFeeUsd": 0.0, "depositDelaySeconds": 60.0}}, {"id": 5, "name": "Aster", "inbalance": -2787.03, "stables": ["USDT", "USDC"], "chains": ["BSC", "ETHEREUM", "ARBITRUM", "SOLANA"], "withdrawBalances": {}, "logo": "data:image/webp;base64,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", "brandColor": "#fad6ac", "operationalParams": {"withdrawFeeUsd": 1.0, "withdrawDelaySeconds": 300.0, "depositFeeUsd": 0.0, "depositDelaySeconds": 60.0}}, {"id": 16, "name": "dYdX", "inbalance": -2467.34, "stables": ["USDC"], "chains": ["ETHEREUM", "ARBITRUM", "OPTIMISM", "BASE", "POLYGON", "AVALANCHE"], "withdrawBalances": {}, "logo": "data:image/webp;base64,UklGRhIDAABXRUJQVlA4TAYDAAAvP8APANVImrXtmJwYbVuxbdu2bdtc2bZt27adbX6K3+5tnCf2sxs+YVd9NeY7UReBpM18/85HmLZtc2tTO+v/BJjo6mY+EMlCVzNSS3Qt1GFYyUcN0YWslLGc212Qg/OYQEh0B7yFpLrAti2i1UYLMRABncKsP+SrWCXkBt6CAgCgmgW5vWcn11FKBRMx0rQaAwGQc0Z67YgVMq9r3VkjJV8JAJCaCBAo4rS2rxMpz485sqwdLrkoPBEAheTqIGdBcjbGnqZs1xITYc4e7fjutR1htdxcURNJiyxzr00VP83YJb1RJsa4BpDoUqkNueqZmetMWuqILJ73xeI2Vi+xqmZkepxuC8D9aWdT38lIgSIOxxAngpmOeeYvc8RqYwzwVMUhZ9eoJfL/tRUmMgCwxKp2gaSmkg4kmoNloVALrm49XuCbkrtcdkbaoNBm7pipCQ9YGTVTBpSKZWvRKNzjvVioYcBSd7k5LJXxHpLwYK801jcVJIYCRezTTZVgG7mOXXGmOdeMFwF9k3OXPdXLH8qVWOCn1OtutIREq/C05IAgZVt3s5kqciXkVuywhaBioIxDmqU2qcLmj5+E3xNwXXuj95qARWBU126OxNg0IWe0fSWxkp3Hm7JQKNHrtlxoZBqoYxrsbTM7JRXMh72NjQF1y8ZmifQqYv5h8UukgzFM4uFPQh3X9i+J+UfY2hZ2aiJouaX9IuMftWbjriYpIpWZZe5vCQ6XskjFU23mcCMDkvvl4rTLDnXk7I43xcVNsNsWg4o2ytR/bavwCU2qw8a2/3BrMaOb0cbqxrvpRbZK2besKkqyAFSvPboDzcp2b9t5KEEmGrDQ8UhrelbbBk5GAnLn5WbZ2GxplpVkSMc1TKNaAixHCXiIAeD7DCiGf0o1K4CRKUnoKYdNrQkcAEijFJS/+/7JwWTkaFITkiApDAQWQE+VfOplUgAQgF7PLx2KaAYCAHhxFb04cj0BAAQB2NwteRXBnkJGBeYsAkXoh+6QqsV3JYBAAZyQDUdXc84H/wA=", "brandColor": "#6966ff", "operationalParams": {"withdrawFeeUsd": 1.0, "withdrawDelaySeconds": 300.0, "depositFeeUsd": 0.0, "depositDelaySeconds": 60.0}}, {"id": 24, "name": "Extended", "inbalance": -942.52, "stables": ["USDC"], "chains": ["ARBITRUM", "ETHEREUM", "BASE", "BSC", "AVALANCHE", "POLYGON"], "withdrawBalances": {}, "logo": "data:image/webp;base64,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", "brandColor": "#07956a", "operationalParams": {"withdrawFeeUsd": 1.0, "withdrawDelaySeconds": 300.0, "depositFeeUsd": 0.0, "depositDelaySeconds": 60.0}}, {"id": 32, "name": "Gate (Perp DEX)", "inbalance": 0, "stables": ["USDT"], "chains": ["SOLANA", "ETHEREUM", "BSC", "BASE"], "withdrawBalances": {"USDT": 1764.73}, "logo": "data:image/webp;base64,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", "brandColor": "#0068ff", "operationalParams": {"withdrawFeeUsd": 1.0, "withdrawDelaySeconds": 300.0, "depositFeeUsd": 0.0, "depositDelaySeconds": 60.0}}, {"id": 38, "name": "Hyperliquid", "inbalance": 0, "stables": ["USDC"], "chains": ["ARBITRUM"], "withdrawBalances": {"USDC": 1328.94}, "logo": "data:image/webp;base64,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", "brandColor": "#66f5cf", "operationalParams": {"withdrawFeeUsd": 1.0, "withdrawDelaySeconds": 300.0, "depositFeeUsd": 0.0, "depositDelaySeconds": 60.0}}, {"id": 41, "name": "Lighter", "inbalance": 0, "stables": ["USDC"], "chains": ["ARBITRUM", "BASE", "AVALANCHE"], "withdrawBalances": {"USDC": 1817.23}, "logo": "data:image/webp;base64,UklGRuABAABXRUJQVlA4TNQBAAAvP8APANVImbZtsZs9+O2GmWOjIpnJYtkxa3b9AfXM3DpuFdtOZX8AOpTM/L2qsZ3Xv3PWlXbLoUfnLQ6BpI17/85n2LZtGMlpnP3/8Po/Ack6uN1UJubWRBtpmJTvtEWcJCET8mrEZJYT2AcH3o5OKJU8w4dYR0mrZNx9Un3OA9hIMqamd9IuV4g7IORLj9wA7uMesBFEkjvTymy57QeDjqlRu4R4gAB0fIcTibtgEAplNsGgNQtvJExlYm4X7cV6yY6Ut5OW2y6OZyohr5N63sT0IiEZU9M66ZfrwGShY6pRmc5b/vvA1ELG/y8rzoP/DzCCqUJkyOziXoSrDlIBY5oQSa/RNoNbiZEAdMYLmmMAByAkGwgGSO0FrQ0Q2Q1Kt4HNfN4DfKDAuPC/RWL1OYzjKDPRzlS7grvAWVQZyajPSDG249cfU9WqgLEfOcUx77z6VBBgJaOMqa8WzUyMp7CarnxNqzokbzGCW5h35J1X1abvuEteDIlXX3VI9gC4gm5x4O5MVaumJ65jKsVtWZ/aAZxDtciQWh3KIlxFjUjI+ozD/08jr/k5pHazYztZSxnSZ3LUm8bCdLx3anuyi/biJtTncqRJVK9V+5n1BZl1cDs=", "brandColor": "#cbd5e1", "operationalParams": {"withdrawFeeUsd": 1.0, "withdrawDelaySeconds": 300.0, "depositFeeUsd": 0.0, "depositDelaySeconds": 60.0}}, {"id": 46, "name": "MEXC", "inbalance": 0, "stables": ["USDT", "USDC"], "chains": ["ETHEREUM", "ARBITRUM", "SOLANA", "BSC", "POLYGON", "BASE", "OPTIMISM", "AVALANCHE"], "withdrawBalances": {"USDC": 3467.42}, "logo": "data:image/webp;base64,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", "brandColor": "#1a78f4", "operationalParams": {"withdrawFeeUsd": 1.0, "withdrawDelaySeconds": 300.0, "depositFeeUsd": 0.0, "depositDelaySeconds": 60.0}}, {"id": 65, "name": "Ondo Perps", "inbalance": 0, "stables": ["USDC"], "chains": ["ETHEREUM"], "withdrawBalances": {"USDC": 391.28}, "logo": "data:image/webp;base64,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", "brandColor": "#f43f5e", "operationalParams": {"withdrawFeeUsd": 1.0, "withdrawDelaySeconds": 300.0, "depositFeeUsd": 0.0, "depositDelaySeconds": 60.0}}], "paths": {"Aden": {}, "Aster": {}, "dYdX": {}, "Extended": {}, "Gate (Perp DEX)": {"Aden": {"totalCost": 1.0005138, "totalTime": 370.56, "hops": [{"from": "Gate (Perp DEX) withdraw (USDT)", "to": "Your wallet (SOLANA/USDT)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (SOLANA/USDT)", "to": "Aden deposit SOLANA/USDT", "cost": 0.0005138, "time": 70.56, "type": "Deposit", "protocol": null}]}, "Aster": {"totalCost": 1.0005138, "totalTime": 370.56, "hops": [{"from": "Gate (Perp DEX) withdraw (USDT)", "to": "Your wallet (SOLANA/USDT)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (SOLANA/USDT)", "to": "Aster deposit SOLANA/USDT", "cost": 0.0005138, "time": 70.56, "type": "Deposit", "protocol": null}]}, "dYdX": {"totalCost": 1.0012221746281378, "totalTime": 1572.62, "hops": [{"from": "Gate (Perp DEX) withdraw (USDT)", "to": "Your wallet (SOLANA/USDT)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (SOLANA/USDT)", "to": "Bridge AVALANCHE/USDT", "cost": 0.0010276, "time": 1210.56, "type": "Bridge", "protocol": "Generic"}, {"from": "Bridge AVALANCHE/USDT", "to": "Swap USDT->USDC (AVALANCHE)", "cost": 0.00014174986111883999, "time": 1.03, "type": "Swap", "protocol": null}, {"from": "Bridge AVALANCHE/USDC", "to": "dYdX deposit AVALANCHE/USDC", "cost": 5.282476701879e-05, "time": 61.03, "type": "Deposit", "protocol": null}]}, "Extended": {"totalCost": 1.0012221746281378, "totalTime": 1572.62, "hops": [{"from": "Gate (Perp DEX) withdraw (USDT)", "to": "Your wallet (SOLANA/USDT)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (SOLANA/USDT)", "to": "Bridge AVALANCHE/USDT", "cost": 0.0010276, "time": 1210.56, "type": "Bridge", "protocol": "Generic"}, {"from": "Bridge AVALANCHE/USDT", "to": "Swap USDT->USDC (AVALANCHE)", "cost": 0.00014174986111883999, "time": 1.03, "type": "Swap", "protocol": null}, {"from": "Bridge AVALANCHE/USDC", "to": "Extended deposit AVALANCHE/USDC", "cost": 5.282476701879e-05, "time": 61.03, "type": "Deposit", "protocol": null}]}}, "Hyperliquid": {"Aden": {"totalCost": 1.0094750858573482, "totalTime": 2531.84, "hops": [{"from": "Hyperliquid withdraw (USDC)", "to": "Your wallet (ARBITRUM/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (ARBITRUM/USDC)", "to": "Bridge AVALANCHE/USDC", "cost": 0.0086992204275, "time": 960.25, "type": "Bridge", "protocol": "CCTP V1"}, {"from": "Bridge AVALANCHE/USDC", "to": "Swap USDC->USDT (AVALANCHE)", "cost": 0.00014174986111883999, "time": 1.03, "type": "Swap", "protocol": null}, {"from": "Bridge AVALANCHE/USDT", "to": "Aden deposit SOLANA/USDT", "cost": 0.0006341155687292, "time": 1270.56, "type": "Deposit", "protocol": "Generic"}]}, "Aster": {"totalCost": 1.0031864862835, "totalTime": 360.25, "hops": [{"from": "Hyperliquid withdraw (USDC)", "to": "Your wallet (ARBITRUM/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (ARBITRUM/USDC)", "to": "Aster deposit ARBITRUM/USDC", "cost": 0.0031864862835, "time": 60.25, "type": "Deposit", "protocol": null}]}, "dYdX": {"totalCost": 1.0031864862835, "totalTime": 360.25, "hops": [{"from": "Hyperliquid withdraw (USDC)", "to": "Your wallet (ARBITRUM/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (ARBITRUM/USDC)", "to": "dYdX deposit ARBITRUM/USDC", "cost": 0.0031864862835, "time": 60.25, "type": "Deposit", "protocol": null}]}, "Extended": {"totalCost": 1.0031864862835, "totalTime": 360.25, "hops": [{"from": "Hyperliquid withdraw (USDC)", "to": "Your wallet (ARBITRUM/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (ARBITRUM/USDC)", "to": "Extended deposit ARBITRUM/USDC", "cost": 0.0031864862835, "time": 60.25, "type": "Deposit", "protocol": null}]}}, "Lighter": {"Aden": {"totalCost": 1.000828690196867, "totalTime": 1572.62, "hops": [{"from": "Lighter withdraw (USDC)", "to": "Your wallet (AVALANCHE/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (AVALANCHE/USDC)", "to": "Bridge AVALANCHE/USDC", "cost": 5.282476701879e-05, "time": 1.03, "type": "Bridge", "protocol": null}, {"from": "Bridge AVALANCHE/USDC", "to": "Swap USDC->USDT (AVALANCHE)", "cost": 0.00014174986111883999, "time": 1.03, "type": "Swap", "protocol": null}, {"from": "Bridge AVALANCHE/USDT", "to": "Aden deposit SOLANA/USDT", "cost": 0.0006341155687292, "time": 1270.56, "type": "Deposit", "protocol": "Generic"}]}, "Aster": {"totalCost": 1.0006869403357481, "totalTime": 1571.59, "hops": [{"from": "Lighter withdraw (USDC)", "to": "Your wallet (AVALANCHE/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (AVALANCHE/USDC)", "to": "Aster deposit SOLANA/USDC", "cost": 0.00068694033574799, "time": 1271.59, "type": "Deposit", "protocol": "Generic"}]}, "dYdX": {"totalCost": 1.0000528247670188, "totalTime": 361.03, "hops": [{"from": "Lighter withdraw (USDC)", "to": "Your wallet (AVALANCHE/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (AVALANCHE/USDC)", "to": "dYdX deposit AVALANCHE/USDC", "cost": 5.282476701879e-05, "time": 61.03, "type": "Deposit", "protocol": null}]}, "Extended": {"totalCost": 1.0000528247670188, "totalTime": 361.03, "hops": [{"from": "Lighter withdraw (USDC)", "to": "Your wallet (AVALANCHE/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (AVALANCHE/USDC)", "to": "Extended deposit AVALANCHE/USDC", "cost": 5.282476701879e-05, "time": 61.03, "type": "Deposit", "protocol": null}]}}, "MEXC": {"Aden": {"totalCost": 1.000828690196867, "totalTime": 1572.62, "hops": [{"from": "MEXC withdraw (USDC)", "to": "Your wallet (AVALANCHE/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (AVALANCHE/USDC)", "to": "Bridge AVALANCHE/USDC", "cost": 5.282476701879e-05, "time": 1.03, "type": "Bridge", "protocol": null}, {"from": "Bridge AVALANCHE/USDC", "to": "Swap USDC->USDT (AVALANCHE)", "cost": 0.00014174986111883999, "time": 1.03, "type": "Swap", "protocol": null}, {"from": "Bridge AVALANCHE/USDT", "to": "Aden deposit SOLANA/USDT", "cost": 0.0006341155687292, "time": 1270.56, "type": "Deposit", "protocol": "Generic"}]}, "Aster": {"totalCost": 1.0005138, "totalTime": 370.56, "hops": [{"from": "MEXC withdraw (USDC)", "to": "Your wallet (SOLANA/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (SOLANA/USDC)", "to": "Aster deposit SOLANA/USDC", "cost": 0.0005138, "time": 70.56, "type": "Deposit", "protocol": null}]}, "dYdX": {"totalCost": 1.0000528247670188, "totalTime": 361.03, "hops": [{"from": "MEXC withdraw (USDC)", "to": "Your wallet (AVALANCHE/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (AVALANCHE/USDC)", "to": "dYdX deposit AVALANCHE/USDC", "cost": 5.282476701879e-05, "time": 61.03, "type": "Deposit", "protocol": null}]}, "Extended": {"totalCost": 1.0000528247670188, "totalTime": 361.03, "hops": [{"from": "MEXC withdraw (USDC)", "to": "Your wallet (AVALANCHE/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (AVALANCHE/USDC)", "to": "Extended deposit AVALANCHE/USDC", "cost": 5.282476701879e-05, "time": 61.03, "type": "Deposit", "protocol": null}]}}, "Ondo Perps": {"Aden": {"totalCost": 1.1740435663977153, "totalTime": 2677.03, "hops": [{"from": "Ondo Perps withdraw (USDC)", "to": "Your wallet (ETHEREUM/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (ETHEREUM/USDC)", "to": "Bridge AVALANCHE/USDC", "cost": 0.17326770096786703, "time": 1105.44, "type": "Bridge", "protocol": "CCTP V1"}, {"from": "Bridge AVALANCHE/USDC", "to": "Swap USDC->USDT (AVALANCHE)", "cost": 0.00014174986111883999, "time": 1.03, "type": "Swap", "protocol": null}, {"from": "Bridge AVALANCHE/USDT", "to": "Aden deposit SOLANA/USDT", "cost": 0.0006341155687292, "time": 1270.56, "type": "Deposit", "protocol": "Generic"}]}, "Aster": {"totalCost": 1.0637089278868608, "totalTime": 505.44, "hops": [{"from": "Ondo Perps withdraw (USDC)", "to": "Your wallet (ETHEREUM/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (ETHEREUM/USDC)", "to": "Aster deposit ETHEREUM/USDC", "cost": 0.06370892788686075, "time": 205.44, "type": "Deposit", "protocol": null}]}, "dYdX": {"totalCost": 1.0637089278868608, "totalTime": 505.44, "hops": [{"from": "Ondo Perps withdraw (USDC)", "to": "Your wallet (ETHEREUM/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (ETHEREUM/USDC)", "to": "dYdX deposit ETHEREUM/USDC", "cost": 0.06370892788686075, "time": 205.44, "type": "Deposit", "protocol": null}]}, "Extended": {"totalCost": 1.0637089278868608, "totalTime": 505.44, "hops": [{"from": "Ondo Perps withdraw (USDC)", "to": "Your wallet (ETHEREUM/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (ETHEREUM/USDC)", "to": "Extended deposit ETHEREUM/USDC", "cost": 0.06370892788686075, "time": 205.44, "type": "Deposit", "protocol": null}]}}}, "operations": [{"from": "MEXC withdraw (USDC)", "to": "MEXC deposit AVALANCHE/USDC", "amount": 3467.42, "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "dYdX deposit AVALANCHE/USDC", "to": "dYdX", "amount": 2467.34, "cost": 0.0, "time": 60.0, "type": "Deposit", "protocol": null}, {"from": "MEXC deposit AVALANCHE/USDC", "to": "dYdX deposit AVALANCHE/USDC", "amount": 2467.34, "cost": 5.282476701879e-05, "time": 1.03, "type": "On-chain transfer", "protocol": null}, {"from": "Aden deposit ETHEREUM/USDT", "to": "Aden", "amount": 1874.79, "cost": 0.0, "time": 60.0, "type": "Deposit", "protocol": null}, {"from": "Bridge AVALANCHE/USDC", "to": "Bridge ETHEREUM/USDC", "amount": 1874.79, "cost": 9.157801168626416e-05, "time": 60, "type": "Bridge", "protocol": "CCTP V1"}, {"from": "Bridge ETHEREUM/USDT", "to": "Aden deposit ETHEREUM/USDT", "amount": 1874.79, "cost": 0.06370892788686075, "time": 145.44, "type": "Bridge", "protocol": null}, {"from": "Bridge ETHEREUM/USDC", "to": "Swap USDC->USDT (ETHEREUM)", "amount": 1874.79, "cost": 0.168371842383018, "time": 145.44, "type": "Swap", "protocol": null}, {"from": "Lighter withdraw (USDC)", "to": "Lighter deposit AVALANCHE/USDC", "amount": 1817.23, "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Lighter deposit AVALANCHE/USDC", "to": "Bridge AVALANCHE/USDC", "amount": 1817.23, "cost": 5.282476701879e-05, "time": 1.03, "type": "Bridge", "protocol": null}, {"from": "Gate (Perp DEX) withdraw (USDT)", "to": "Gate (Perp DEX) deposit SOLANA/USDT", "amount": 1764.73, "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Aster deposit ARBITRUM/USDC", "to": "Aster", "amount": 1328.94, "cost": 0.0, "time": 60.0, "type": "Deposit", "protocol": null}, {"from": "Hyperliquid withdraw (USDC)", "to": "Hyperliquid deposit ARBITRUM/USDC", "amount": 1328.94, "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Hyperliquid deposit ARBITRUM/USDC", "to": "Aster deposit ARBITRUM/USDC", "amount": 1328.94, "cost": 0.0031864862835, "time": 0.25, "type": "On-chain transfer", "protocol": null}, {"from": "Aster deposit SOLANA/USDT", "to": "Aster", "amount": 1066.81, "cost": 0.0, "time": 60.0, "type": "Deposit", "protocol": null}, {"from": "Gate (Perp DEX) deposit SOLANA/USDT", "to": "Aster deposit SOLANA/USDT", "amount": 1066.81, "cost": 0.0005138, "time": 10.56, "type": "On-chain transfer", "protocol": null}, {"from": "Extended deposit AVALANCHE/USDC", "to": "Extended", "amount": 942.52, "cost": 0.0, "time": 60.0, "type": "Deposit", "protocol": null}, {"from": "MEXC deposit AVALANCHE/USDC", "to": "Extended deposit AVALANCHE/USDC", "amount": 942.52, "cost": 5.282476701879e-05, "time": 1.03, "type": "On-chain transfer", "protocol": null}, {"from": "Aden deposit SOLANA/USDT", "to": "Aden", "amount": 697.92, "cost": 0.0, "time": 60.0, "type": "Deposit", "protocol": null}, {"from": "Gate (Perp DEX) deposit SOLANA/USDT", "to": "Aden deposit SOLANA/USDT", "amount": 697.92, "cost": 0.0005138, "time": 10.56, "type": "On-chain transfer", "protocol": null}, {"from": "Aster deposit ETHEREUM/USDC", "to": "Aster", "amount": 391.28, "cost": 0.0, "time": 60.0, "type": "Deposit", "protocol": null}, {"from": "Ondo Perps withdraw (USDC)", "to": "Ondo Perps deposit ETHEREUM/USDC", "amount": 391.28, "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Ondo Perps deposit ETHEREUM/USDC", "to": "Aster deposit ETHEREUM/USDC", "amount": 391.28, "cost": 0.06370892788686075, "time": 145.44, "type": "On-chain transfer", "protocol": null}, {"from": "MEXC deposit AVALANCHE/USDC", "to": "Bridge AVALANCHE/USDC", "amount": 57.56, "cost": 5.282476701879e-05, "time": 1.03, "type": "Bridge", "protocol": null}], "journeys": [{"from": "MEXC", "to": "dYdX", "amount": 2467.34, "plausible": false, "totalCost": 1.0000528247670188, "totalTime": 361.03, "hops": [{"from": "MEXC withdraw (USDC)", "to": "Your wallet (AVALANCHE/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (AVALANCHE/USDC)", "to": "dYdX deposit AVALANCHE/USDC", "cost": 5.282476701879e-05, "time": 61.03, "type": "Deposit", "protocol": null}]}, {"from": "Lighter", "to": "Aden", "amount": 1817.23, "plausible": false, "totalCost": 1.2322251730485838, "totalTime": 711.91, "hops": [{"from": "Lighter withdraw (USDC)", "to": "Your wallet (AVALANCHE/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (AVALANCHE/USDC)", "to": "Bridge ETHEREUM/USDC", "cost": 0.00014440277870505418, "time": 61.03, "type": "Bridge", "protocol": "CCTP V1"}, {"from": "Bridge ETHEREUM/USDC", "to": "Swap USDC->USDT (ETHEREUM)", "cost": 0.168371842383018, "time": 145.44, "type": "Swap", "protocol": null}, {"from": "Bridge ETHEREUM/USDT", "to": "Aden deposit ETHEREUM/USDT", "cost": 0.06370892788686075, "time": 205.44, "type": "Deposit", "protocol": null}]}, {"from": "Hyperliquid", "to": "Aster", "amount": 1328.94, "plausible": false, "totalCost": 1.0031864862835, "totalTime": 360.25, "hops": [{"from": "Hyperliquid withdraw (USDC)", "to": "Your wallet (ARBITRUM/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (ARBITRUM/USDC)", "to": "Aster deposit ARBITRUM/USDC", "cost": 0.0031864862835, "time": 60.25, "type": "Deposit", "protocol": null}]}, {"from": "Gate (Perp DEX)", "to": "Aster", "amount": 1066.81, "plausible": false, "totalCost": 1.0005138, "totalTime": 370.56, "hops": [{"from": "Gate (Perp DEX) withdraw (USDT)", "to": "Your wallet (SOLANA/USDT)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (SOLANA/USDT)", "to": "Aster deposit SOLANA/USDT", "cost": 0.0005138, "time": 70.56, "type": "Deposit", "protocol": null}]}, {"from": "MEXC", "to": "Extended", "amount": 942.52, "plausible": false, "totalCost": 1.0000528247670188, "totalTime": 361.03, "hops": [{"from": "MEXC withdraw (USDC)", "to": "Your wallet (AVALANCHE/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (AVALANCHE/USDC)", "to": "Extended deposit AVALANCHE/USDC", "cost": 5.282476701879e-05, "time": 61.03, "type": "Deposit", "protocol": null}]}, {"from": "Gate (Perp DEX)", "to": "Aden", "amount": 697.92, "plausible": false, "totalCost": 1.0005138, "totalTime": 370.56, "hops": [{"from": "Gate (Perp DEX) withdraw (USDT)", "to": "Your wallet (SOLANA/USDT)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (SOLANA/USDT)", "to": "Aden deposit SOLANA/USDT", "cost": 0.0005138, "time": 70.56, "type": "Deposit", "protocol": null}]}, {"from": "Ondo Perps", "to": "Aster", "amount": 391.28, "plausible": false, "totalCost": 1.0637089278868608, "totalTime": 505.44, "hops": [{"from": "Ondo Perps withdraw (USDC)", "to": "Your wallet (ETHEREUM/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (ETHEREUM/USDC)", "to": "Aster deposit ETHEREUM/USDC", "cost": 0.06370892788686075, "time": 205.44, "type": "Deposit", "protocol": null}]}, {"from": "MEXC", "to": "Aden", "amount": 57.559999999999945, "plausible": false, "totalCost": 1.2322251730485838, "totalTime": 711.91, "hops": [{"from": "MEXC withdraw (USDC)", "to": "Your wallet (AVALANCHE/USDC)", "cost": 1.0, "time": 300.0, "type": "Withdraw", "protocol": null}, {"from": "Your wallet (AVALANCHE/USDC)", "to": "Bridge ETHEREUM/USDC", "cost": 0.00014440277870505418, "time": 61.03, "type": "Bridge", "protocol": "CCTP V1"}, {"from": "Bridge ETHEREUM/USDC", "to": "Swap USDC->USDT (ETHEREUM)", "cost": 0.168371842383018, "time": 145.44, "type": "Swap", "protocol": null}, {"from": "Bridge ETHEREUM/USDT", "to": "Aden deposit ETHEREUM/USDT", "cost": 0.06370892788686075, "time": 205.44, "type": "Deposit", "protocol": null}]}], "timeWeight": {"lambdaMin": 0.0, "lambdaMax": 1.0, "k": 2.0, "epsilon": 0.1}};
 
 const MIN_R = 16, MAX_R = 34, MIN_ARC_SPACING = 70;
 const SVG_NS = "http://www.w3.org/2000/svg";
+const XLINK_NS = "http://www.w3.org/1999/xlink";
 
 const dexByName = new Map(GRAPH_DATA.dexNodes.map(d => [d.name, d]));
 const dexById = new Map(GRAPH_DATA.dexNodes.map(d => [d.id, d]));
@@ -217,17 +418,63 @@ document.getElementById("centerMark").setAttribute("font-size", Math.max(18, rin
 const pathEdges = [];
 for (const [fromName, targets] of Object.entries(GRAPH_DATA.paths)) {
   for (const [toName, path] of Object.entries(targets)) {
-    pathEdges.push({ from: fromName, to: toName, cost: path.totalCost, hops: path.hops });
+    pathEdges.push({ from: fromName, to: toName, cost: path.totalCost, time: path.totalTime, hops: path.hops });
   }
 }
 const maxCost = Math.max(1e-9, ...pathEdges.map(e => e.cost));
 
+// Trajets DEX -> DEX réellement choisis par le solveur (edge.flow > 0),
+// décomposés côté Python dans visualization/journeys.py — potentiellement
+// plusieurs par paire si le solveur les a répartis sur des hops distincts.
+// `plausible` marque un trajet dont l'attribution source/destination n'est
+// qu'une explication parmi d'autres compatibles avec le même flot agrégé
+// (voir Journey.plausible dans journeys.py).
+const journeysByPair = new Map();
+for (const j of GRAPH_DATA.journeys) {
+  const key = `${j.from}→${j.to}`;
+  if (!journeysByPair.has(key)) journeysByPair.set(key, []);
+  journeysByPair.get(key).push(j);
+}
+
 function fmt(x) {
   if (x === null || x === undefined) return "–";
-  return Math.abs(x) >= 1000 ? x.toFixed(0) : x.toFixed(2);
+  const abs = Math.abs(x);
+  if (abs === 0) return "0.00";
+  if (abs >= 1000) return x.toFixed(0);
+  if (abs >= 1) return x.toFixed(2);
+  // Sub-$1 values (e.g. on-chain transfer gas costs, often a fraction of a
+  // cent) : a flat toFixed(2) rounds every single one of them to "0.00",
+  // making a real, live-fetched cost indistinguishable from a missing one.
+  // Scale decimals to the value's magnitude instead, so the first two
+  // significant digits always show (capped at 6 decimals).
+  const decimals = Math.min(6, 1 - Math.floor(Math.log10(abs)));
+  return x.toFixed(decimals);
 }
 function fmtSigned(x) {
   return (x > 0 ? "+" : "") + fmt(x);
+}
+function fmtDuration(seconds) {
+  const s = Math.round(seconds || 0);
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m}m${(s % 60).toString().padStart(2, "0")}s` : `${s}s`;
+}
+// Une couleur par type d'opération (Withdraw/Deposit/On-chain transfer/
+// Bridge/Swap) — voir --type-* dans :root et web_view.py:_hopKind, qui
+// calcule `type` côté Python. `typeSlug` sert aussi à teinter le liseré de
+// la ligne entière (.hop/.op-row), pas seulement le badge.
+function typeSlug(type) {
+  return type ? type.toLowerCase().replace(/[^a-z]+/g, "-") : "";
+}
+function typeTag(type) {
+  return type ? `<span class="type-tag type-${typeSlug(type)}">${type}</span>` : "";
+}
+function hopHtml(h) {
+  // A cross-chain move is one hop here (entry/cross/exit already merged
+  // server-side, see web_view.py:_buildHopList) — h.protocol names which
+  // bridge protocol the solver actually picked for it (GENERIC / CCTP V1 /
+  // CCTP V2), null for any non-Bridge hop.
+  const protocol = h.protocol ? ` <span class="hop-protocol">via ${h.protocol}</span>` : "";
+  return `<div class="hop type-${typeSlug(h.type)}">${typeTag(h.type)} <span class="hop-cost">${fmt(h.cost)} · ${fmtDuration(h.time)}</span><b>${h.from}</b> → ${h.to}${protocol}</div>`;
 }
 
 function edgeGeometry(a, b) {
@@ -243,6 +490,33 @@ function edgeGeometry(a, b) {
   return { sx, sy, ex, ey, mx, my };
 }
 
+// Chapelet de points animés le long d'une arête "chosen", du DEX source vers
+// le DEX destination (sens naturel du path SVG : M sx,sy -> ex,ey) — façon
+// L2Beat. `speedFactor` étire dur/décalage pour les longues arêtes plutôt que
+// de faire filer les points plus vite dessus qu'ailleurs.
+function createFlowDots(pathId, speedFactor = 1) {
+  const count = 3;
+  const dur = (2.2 * speedFactor).toFixed(2);
+  const g = document.createElementNS(SVG_NS, "g");
+  g.setAttribute("class", "flow-dots");
+  for (let i = 0; i < count; i++) {
+    const dot = document.createElementNS(SVG_NS, "circle");
+    dot.setAttribute("class", "flow-dot");
+    dot.setAttribute("r", "1.8");
+    const anim = document.createElementNS(SVG_NS, "animateMotion");
+    anim.setAttribute("dur", `${dur}s`);
+    anim.setAttribute("repeatCount", "indefinite");
+    anim.setAttribute("begin", `${(-(i / count) * dur).toFixed(2)}s`);
+    const mpath = document.createElementNS(SVG_NS, "mpath");
+    mpath.setAttributeNS(XLINK_NS, "xlink:href", `#${pathId}`);
+    mpath.setAttribute("href", `#${pathId}`);
+    anim.appendChild(mpath);
+    dot.appendChild(anim);
+    g.appendChild(dot);
+  }
+  return g;
+}
+
 const svg = document.getElementById("graphSvg");
 const viewport = document.getElementById("viewport");
 const edgesLayer = document.getElementById("edgesLayer");
@@ -250,13 +524,16 @@ const nodesLayer = document.getElementById("nodesLayer");
 const canvasWrap = document.getElementById("canvasWrap");
 const tooltip = document.getElementById("tooltip");
 
+let edgeCounter = 0;
 const edgeElements = [];
 for (const e of pathEdges) {
   const a = dexByName.get(e.from), b = dexByName.get(e.to);
   const { sx, sy, mx, my, ex, ey } = edgeGeometry(a, b);
   const weight = 1 - e.cost / maxCost;
 
+  const pathId = `edge-path-${edgeCounter++}`;
   const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("id", pathId);
   path.setAttribute("d", `M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}`);
   path.setAttribute("class", "edge");
   path.setAttribute("marker-end", "url(#arrow)");
@@ -264,6 +541,15 @@ for (const e of pathEdges) {
   path.style.opacity = (0.12 + weight * 0.35).toFixed(2);
   path.dataset.from = e.from;
   path.dataset.to = e.to;
+
+  // `state.journeys` (pas une const capturée) : mutable en place par
+  // refreshFromSolveResult quand un nouveau k re-solve le graphe côté
+  // serveur, sans avoir à redessiner ni rebrancher les listeners de l'edge.
+  const state = { journeys: journeysByPair.get(`${e.from}→${e.to}`) || null };
+  if (state.journeys) {
+    path.classList.add("chosen");
+    path.classList.toggle("approximate", state.journeys.some(j => j.plausible));
+  }
 
   const label = document.createElementNS(SVG_NS, "text");
   label.setAttribute("class", "edge-label hidden");
@@ -274,11 +560,28 @@ for (const e of pathEdges) {
 
   edgesLayer.appendChild(path);
   edgesLayer.appendChild(label);
-  edgeElements.push({ e, path, label });
 
-  path.addEventListener("mouseenter", (ev) => showTooltip(ev, edgeTooltipHtml(e)));
-  path.addEventListener("mousemove", positionTooltip);
-  path.addEventListener("mouseleave", hideTooltip);
+  // Toujours créées (même arête pas encore choisie) : un k re-solvé côté
+  // serveur peut faire basculer n'importe quelle arête en "chosen" sans
+  // recharger la page, voir refreshFromSolveResult.
+  const pathLength = Math.hypot(ex - sx, ey - sy);
+  const dots = createFlowDots(pathId, Math.max(0.6, pathLength / 260));
+  dots.classList.toggle("hidden", !state.journeys);
+  edgesLayer.appendChild(dots);
+
+  // Hitbox invisible bien plus large que le trait visible (voir .edge-hit) :
+  // porte tous les listeners, ajoutée en dernier pour rester au-dessus.
+  const hitPath = document.createElementNS(SVG_NS, "path");
+  hitPath.setAttribute("d", `M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}`);
+  hitPath.setAttribute("class", "edge-hit clickable");
+  edgesLayer.appendChild(hitPath);
+
+  edgeElements.push({ e, path, label, dots, state });
+
+  hitPath.addEventListener("mouseenter", (ev) => { path.classList.add("hover"); showTooltip(ev, edgeTooltipHtml(e, state.journeys)); });
+  hitPath.addEventListener("mousemove", positionTooltip);
+  hitPath.addEventListener("mouseleave", () => { path.classList.remove("hover"); hideTooltip(); });
+  hitPath.addEventListener("click", (ev) => { ev.stopPropagation(); selectEdge(e, state.journeys); });
 }
 
 const nodeElements = new Map();
@@ -288,13 +591,50 @@ for (const dex of GRAPH_DATA.dexNodes) {
   g.setAttribute("transform", `translate(${dex.cx}, ${dex.cy})`);
   g.dataset.name = dex.name;
 
+  // Fond = couleur de marque du DEX (teinte dominante extraite de son logo,
+  // voir visualization/dex_branding.py) ; l'anneau reste la couleur de
+  // solde (surplus/déficit/équilibré) pour ne pas perdre ce signal quand on
+  // y superpose l'identité visuelle — inspiré du rendu des icônes L2Beat.
+  const brandColor = dex.brandColor || `var(--${sign(dex)})`;
   const circle = document.createElementNS(SVG_NS, "circle");
   circle.setAttribute("r", dex.r);
-  circle.style.fill = `var(--${sign(dex)})`;
-  circle.style.fillOpacity = "0.28";
+  circle.style.fill = brandColor;
+  circle.style.fillOpacity = dex.logo ? "0.18" : "0.28";
   circle.style.stroke = `var(--${sign(dex)})`;
   circle.style.strokeWidth = "1.6";
   g.appendChild(circle);
+
+  if (dex.logo) {
+    const clipId = `logo-clip-${dex.id}`;
+    const clipPath = document.createElementNS(SVG_NS, "clipPath");
+    clipPath.setAttribute("id", clipId);
+    const clipCircle = document.createElementNS(SVG_NS, "circle");
+    clipCircle.setAttribute("r", dex.r - 1.5);
+    clipPath.appendChild(clipCircle);
+    g.appendChild(clipPath);
+
+    const logoSize = dex.r * 1.55;
+    const image = document.createElementNS(SVG_NS, "image");
+    image.setAttributeNS(XLINK_NS, "xlink:href", dex.logo);
+    image.setAttribute("href", dex.logo);
+    image.setAttribute("x", -logoSize / 2);
+    image.setAttribute("y", -logoSize / 2);
+    image.setAttribute("width", logoSize);
+    image.setAttribute("height", logoSize);
+    image.setAttribute("preserveAspectRatio", "xMidYMid slice");
+    image.setAttribute("clip-path", `url(#${clipId})`);
+    image.style.pointerEvents = "none";
+    g.appendChild(image);
+  } else {
+    // Pas de branding pour ce DEX (voir _dexNodeDict côté Python) : repli
+    // sur un monogramme plutôt qu'un cercle vide.
+    const monogram = document.createElementNS(SVG_NS, "text");
+    monogram.setAttribute("class", "node-monogram");
+    monogram.setAttribute("y", 4);
+    monogram.setAttribute("text-anchor", "middle");
+    monogram.textContent = (dex.name.match(/[A-Za-z]/g) || ["?"]).slice(0, 2).join("").toUpperCase();
+    g.appendChild(monogram);
+  }
 
   const label = document.createElementNS(SVG_NS, "text");
   label.setAttribute("y", -dex.r - 8);
@@ -304,7 +644,7 @@ for (const dex of GRAPH_DATA.dexNodes) {
 
   const sub = document.createElementNS(SVG_NS, "text");
   sub.setAttribute("class", `sublabel ${sign(dex)}`);
-  sub.setAttribute("y", 4);
+  sub.setAttribute("y", dex.r + 16);
   sub.setAttribute("text-anchor", "middle");
   sub.textContent = fmtSigned(dex.inbalance);
   g.appendChild(sub);
@@ -324,17 +664,25 @@ function nodeTooltipHtml(dex) {
           <div>stables: ${dex.stables.join(", ") || "–"}</div>
           <div>chains: ${dex.chains.length}</div>`;
 }
-function edgeTooltipHtml(e) {
-  return `<div><b>${e.from}</b> → <b>${e.to}</b></div><div>cheapest route cost: ${fmt(e.cost)}</div>`;
+function edgeTooltipHtml(e, journeys) {
+  let html = `<div><b>${e.from}</b> → <b>${e.to}</b></div><div>cheapest route cost: ${fmt(e.cost)} · ${fmtDuration(e.time)}</div>`;
+  if (journeys) {
+    const total = journeys.reduce((s, j) => s + j.amount, 0);
+    const approx = journeys.some(j => j.plausible);
+    html += `<div style="margin-top:4px;color:var(--chosen)"><b>Chosen by solver:</b> ${fmt(total)} moved${approx ? " (approximate)" : ""}</div>`;
+  }
+  return html;
 }
 function showTooltip(ev, html) { tooltip.innerHTML = html; tooltip.style.display = "block"; positionTooltip(ev); }
 function positionTooltip(ev) { tooltip.style.left = (ev.clientX + 14) + "px"; tooltip.style.top = (ev.clientY + 14) + "px"; }
 function hideTooltip() { tooltip.style.display = "none"; }
 
 let selectedName = null;
+let selectedEdgeKey = null;
 
 function clearSelection() {
   selectedName = null;
+  selectedEdgeKey = null;
   document.querySelectorAll(".node.selected").forEach(e => e.classList.remove("selected"));
   document.querySelectorAll(".dimmed").forEach(e => e.classList.remove("dimmed"));
   document.querySelectorAll(".edge.highlight").forEach(e => e.classList.remove("highlight"));
@@ -352,15 +700,13 @@ function renderDexDetails(dex) {
   const chainChips = dex.chains.map(c => `<span class="chip">${c}</span>`).join("");
 
   const rows = Object.entries(targets).sort((a, b) => a[1].totalCost - b[1].totalCost).map(([toName, path]) => {
-    const hops = path.hops.map(h =>
-      `<div class="hop"><span class="hop-cost">${fmt(h.cost)}</span><b>${h.from}</b> → ${h.to}</div>`
-    ).join("") || `<div class="hop">direct — no intermediate hop</div>`;
+    const hops = path.hops.map(hopHtml).join("") || `<div class="hop">direct — no intermediate hop</div>`;
     return `
       <div class="path-row">
         <div class="path-head" data-target="${toName}">
           <span class="chevron">▶</span>
           <span class="name" data-nav="${toName}">${toName}</span>
-          <span class="cost">${fmt(path.totalCost)}</span>
+          <span class="cost">${fmt(path.totalCost)} · ${fmtDuration(path.totalTime)}</span>
         </div>
         <div class="path-hops">${hops}</div>
       </div>`;
@@ -402,15 +748,179 @@ function selectDex(name) {
 
   const connected = new Set([name, ...Object.keys(GRAPH_DATA.paths[name] || {})]);
   for (const [n, el] of nodeElements) el.classList.toggle("dimmed", !connected.has(n));
-  for (const { e, path, label } of edgeElements) {
+  for (const { e, path, label, dots } of edgeElements) {
     const isOutgoing = e.from === name;
     path.classList.toggle("dimmed", !isOutgoing);
     label.classList.toggle("dimmed", !isOutgoing && !label.classList.contains("hidden"));
+    if (dots) dots.classList.toggle("dimmed", !isOutgoing);
     if (isOutgoing) path.classList.add("highlight");
   }
 
   renderDexDetails(dex);
 }
+
+function selectEdge(e, journeys) {
+  clearSelection();
+  selectedEdgeKey = `${e.from}→${e.to}`;
+  for (const [n, el] of nodeElements) el.classList.toggle("dimmed", n !== e.from && n !== e.to);
+  for (const { e: other, path, label, dots } of edgeElements) {
+    const isThis = other.from === e.from && other.to === e.to;
+    path.classList.toggle("dimmed", !isThis);
+    label.classList.toggle("dimmed", !isThis && !label.classList.contains("hidden"));
+    if (dots) dots.classList.toggle("dimmed", !isThis);
+    if (isThis) path.classList.add("highlight");
+  }
+  renderEdgeDetails(e, journeys);
+}
+
+function renderEdgeDetails(e, journeys) {
+  const hops = e.hops.map(hopHtml).join("") || `<div class="hop">direct — no intermediate hop</div>`;
+
+  let journeySection = "";
+  if (journeys) {
+    const totalAmount = journeys.reduce((s, j) => s + j.amount, 0);
+    const anyApprox = journeys.some(j => j.plausible);
+    const journeyBlocks = journeys.map(j => {
+      const jHops = j.hops.map(hopHtml).join("") || `<div class="hop">direct — no intermediate hop</div>`;
+      return `
+        <div class="path-row">
+          <div class="path-head expanded" style="cursor:default">
+            <span style="flex:1">${fmt(j.amount)} moved${j.plausible ? `<span class="approx-tag">approximate</span>` : ""}</span>
+            <span class="cost">${fmt(j.totalCost)} · ${fmtDuration(j.totalTime)}</span>
+          </div>
+          <div class="path-hops expanded">${jHops}</div>
+        </div>`;
+    }).join("");
+    journeySection = `
+      <h2>Chosen by the solver</h2>
+      <dl><dt>Total moved</dt><dd>${fmt(totalAmount)}</dd></dl>
+      ${anyApprox ? `<div class="approx-note">Part of this route crosses a point where the solver's flow merges with money from other DEXes and later splits again — the hop-by-hop split shown below is one valid explanation of the solver's total, not necessarily the exact one.</div>` : ""}
+      ${journeyBlocks}`;
+  }
+
+  document.getElementById("details").innerHTML = `
+    <h2>Details</h2>
+    <dl>
+      <dt>Route</dt><dd>${e.from} → ${e.to}</dd>
+      <dt>Estimated cost</dt><dd>${fmt(e.cost)}$</dd>
+      <dt>Estimated time</dt><dd>${fmtDuration(e.time)}</dd>
+    </dl>
+    <h2>Hops</h2>
+    ${hops}
+    ${journeySection}`;
+}
+
+// Paramètres λ(σ_d) réellement utilisés par le solveur (voir graph.urgency.
+// TimeWeightParams, câblés dans main.py) — GRAPH_DATA.timeWeight est absent
+// si le graphe a été construit sans time-weighting.
+const kSlider = document.getElementById("kSlider");
+const kValueEl = document.getElementById("kValue");
+const kStatusEl = document.getElementById("kStatus");
+let kSolveInFlight = false;
+let kSolvePending = null;
+
+function renderCostBarParams() {
+  const tw = GRAPH_DATA.timeWeight;
+  document.getElementById("costBar").classList.toggle("hidden", !tw);
+  if (!tw) return;
+  document.getElementById("lambdaMinVal").textContent = fmt(tw.lambdaMin);
+  document.getElementById("lambdaMaxVal").textContent = fmt(tw.lambdaMax);
+  kSlider.value = tw.k;
+  kValueEl.textContent = fmt(tw.k);
+}
+renderCostBarParams();
+
+// Recalcule ce que dépend du plan choisi par le solveur (Fee/Time par arête
+// ne dépendent PAS de k, voir costing.py — seule l'arête choisie en dépend)
+// après un POST /api/solve réussi, en place, sans recharger la page ni
+// retoucher aux nodes/paths Dijkstra (inchangés).
+function refreshFromSolveResult(data) {
+  GRAPH_DATA.operations = data.operations;
+  GRAPH_DATA.journeys = data.journeys;
+  GRAPH_DATA.timeWeight = data.timeWeight;
+
+  journeysByPair.clear();
+  for (const j of GRAPH_DATA.journeys) {
+    const key = `${j.from}→${j.to}`;
+    if (!journeysByPair.has(key)) journeysByPair.set(key, []);
+    journeysByPair.get(key).push(j);
+  }
+
+  for (const el of edgeElements) {
+    const key = `${el.e.from}→${el.e.to}`;
+    const journeys = journeysByPair.get(key) || null;
+    el.state.journeys = journeys;
+    el.path.classList.toggle("chosen", !!journeys);
+    el.path.classList.toggle("approximate", !!journeys && journeys.some(j => j.plausible));
+    el.dots.classList.toggle("hidden", !journeys);
+  }
+
+  opsSummaryData = operationsSummary();
+  renderStats();
+  renderOperations();
+  renderCostBarParams();
+
+  if (selectedEdgeKey) {
+    const el = edgeElements.find(x => `${x.e.from}→${x.e.to}` === selectedEdgeKey);
+    if (el) selectEdge(el.e, el.state.journeys);
+  }
+}
+
+async function requestSolve(k) {
+  if (kSolveInFlight) { kSolvePending = k; return; }
+  kSolveInFlight = true;
+  kStatusEl.textContent = "Solving…";
+  kStatusEl.className = "k-status saving";
+  try {
+    const res = await fetch("/api/solve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ k }),
+    });
+    if (!res.ok) throw new Error("solve failed");
+    refreshFromSolveResult(await res.json());
+    kStatusEl.textContent = "";
+  } catch (e) {
+    kStatusEl.textContent = "Not connected to the solve server — dragging k won't recompute routes. Serve this page with `python -m visualization.server`.";
+    kStatusEl.className = "k-status offline";
+  } finally {
+    kSolveInFlight = false;
+    if (kSolvePending !== null) {
+      const next = kSolvePending;
+      kSolvePending = null;
+      requestSolve(next);
+    }
+  }
+}
+
+let kDebounceTimer = null;
+kSlider.addEventListener("input", () => {
+  kValueEl.textContent = fmt(parseFloat(kSlider.value));
+  clearTimeout(kDebounceTimer);
+  kDebounceTimer = setTimeout(() => requestSolve(parseFloat(kSlider.value)), 250);
+});
+
+// Reconstruit tout le graphe from scratch côté serveur (nouveaux
+// déséquilibres aléatoires de démo, k remis à sa valeur par défaut — voir
+// main.buildAndSolveGraph et POST /api/recompute) : contrairement au curseur
+// k, ça change dexNodes/paths (les balances changent), donc un patch DOM en
+// place ne suffit pas — on recharge la page servie fraîchement re-rendue.
+const recomputeBtn = document.getElementById("recomputeBtn");
+const recomputeStatusEl = document.getElementById("recomputeStatus");
+recomputeBtn.addEventListener("click", async () => {
+  recomputeBtn.disabled = true;
+  recomputeStatusEl.textContent = "Recomputing… (rebuilding demo imbalances, a few seconds)";
+  recomputeStatusEl.className = "k-status saving";
+  try {
+    const res = await fetch("/api/recompute", { method: "POST" });
+    if (!res.ok) throw new Error("recompute failed");
+    window.location.reload();
+  } catch (e) {
+    recomputeStatusEl.textContent = "Not connected to the solve server — can't recompute. Serve this page with `python -m visualization.server`.";
+    recomputeStatusEl.className = "k-status offline";
+    recomputeBtn.disabled = false;
+  }
+});
 
 svg.addEventListener("click", clearSelection);
 
@@ -492,12 +1002,181 @@ document.getElementById("zoomFit").addEventListener("click", fitToScreen);
 
 const reachablePairs = pathEdges.length;
 const totalPairs = GRAPH_DATA.dexNodes.length * (GRAPH_DATA.dexNodes.length - 1);
-document.getElementById("stats").innerHTML = `
-  <span><b>${GRAPH_DATA.dexNodes.length}</b> DEXes</span>
-  <span><b>${reachablePairs}</b> / ${totalPairs} routes reachable</span>`;
+
+// Résumé du plan réellement choisi par le solveur CP-SAT (edge.flow > 0),
+// pas l'estimation Dijkstra par paire montrée dans l'onglet Explore. Partagé
+// entre le header (visible sur tous les onglets) et l'onglet "Chosen
+// Operations" (voir renderOperations) pour ne calculer qu'une seule fois.
+function operationsSummary() {
+  const ops = GRAPH_DATA.operations;
+  if (ops.length === 0) return null;
+  return {
+    count: ops.length,
+    totalAmount: ops.reduce((s, o) => s + o.amount, 0),
+    totalCost: ops.reduce((s, o) => s + o.cost, 0),
+    // Approximation volontaire : le plus long délai parmi tous les hops
+    // choisis, pas la somme des hops le long d'une chaîne (un vrai chemin
+    // critique demanderait de rejouer la décomposition en journeys par
+    // chaîne — voir visualization/journeys.py — plutôt que ce max global).
+    totalTime: Math.max(0, ...ops.map(o => o.time || 0)),
+  };
+}
+
+let opsSummaryData = operationsSummary();
+function renderStats() {
+  document.getElementById("stats").innerHTML = `
+    <span><b>${GRAPH_DATA.dexNodes.length}</b> DEXes</span>
+    <span><b>${reachablePairs}</b> / ${totalPairs} routes reachable</span>` + (opsSummaryData ? `
+    <span><b>${opsSummaryData.count}</b> chosen operations</span>
+    <span><b>$${fmt(opsSummaryData.totalAmount)}</b> moved</span>
+    <span><b>$${fmt(opsSummaryData.totalCost)}</b> fees</span>
+    <span title="Longest single hop among the chosen operations, not the sum along a chain"><b>${fmtDuration(opsSummaryData.totalTime)}</b> est. total time</span>` : "");
+}
+renderStats();
 
 requestAnimationFrame(fitToScreen);
 window.addEventListener("resize", fitToScreen);
+
+function renderOperations() {
+  const ops = GRAPH_DATA.operations;
+  const opsSummary = document.getElementById("opsSummary");
+  const opsList = document.getElementById("opsList");
+
+  if (!opsSummaryData) {
+    opsSummary.innerHTML = "";
+    opsList.innerHTML = `<div class="ops-empty">No rebalancing operations chosen by the solver — every DEX balance is currently zero (target/balance data isn't wired in yet).</div>`;
+    return;
+  }
+
+  opsSummary.innerHTML = `
+    <div>Operations<b>${opsSummaryData.count}</b></div>
+    <div>Total moved<b>$${fmt(opsSummaryData.totalAmount)}</b></div>
+    <div>Total fees<b>$${fmt(opsSummaryData.totalCost)}</b></div>
+    <div title="Longest single hop among the chosen operations, not the sum along a chain">Est. total time<b>${fmtDuration(opsSummaryData.totalTime)}</b></div>`;
+
+  opsList.innerHTML = ops.map(o => `
+    <div class="op-row type-${typeSlug(o.type)}">
+      <span class="op-type">${typeTag(o.type)}</span>
+      <span class="op-route"><b>${o.from}</b> → ${o.to}${o.protocol ? ` <span class="hop-protocol">via ${o.protocol}</span>` : ""}</span>
+      <span class="op-amount">${fmt(o.amount)}</span>
+      <span class="op-cost">${fmt(o.cost)}</span>
+      <span class="op-delay">${o.time ? o.time.toFixed(0) + "s" : "–"}</span>
+    </div>`).join("");
+}
+renderOperations();
+
+function switchTab(name) {
+  document.getElementById("exploreView").classList.toggle("hidden", name !== "explore");
+  document.getElementById("operationsView").classList.toggle("active", name === "operations");
+  document.getElementById("configView").classList.toggle("active", name === "config");
+  document.getElementById("tabExplore").classList.toggle("active", name === "explore");
+  document.getElementById("tabOperations").classList.toggle("active", name === "operations");
+  document.getElementById("tabConfig").classList.toggle("active", name === "config");
+  if (name === "explore") requestAnimationFrame(fitToScreen);
+}
+document.getElementById("tabExplore").addEventListener("click", () => switchTab("explore"));
+document.getElementById("tabOperations").addEventListener("click", () => switchTab("operations"));
+document.getElementById("tabConfig").addEventListener("click", () => switchTab("config"));
+
+// Panel "Config" : édition des frais/délais de dépôt/retrait par DEX,
+// enregistrée directement dans connectors/dex_operational_params.json via le
+// serveur de visualization/server.py (GET/POST /api/config) — plus de
+// copier-coller de JSON, quelqu'un qui n'a que cette page en production peut
+// modifier la config sans toucher au code. localStorage ne sert plus que de
+// repli : page ouverte en fichier local sans serveur, ou serveur injoignable.
+const CONFIG_STORAGE_KEY = "compass_dex_operational_params";
+const CONFIG_FIELDS = ["withdrawFeeUsd", "withdrawDelaySeconds", "depositFeeUsd", "depositDelaySeconds"];
+
+function loadStoredConfig() {
+  try {
+    const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+}
+function saveStoredConfig(config) {
+  try {
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(config));
+  } catch (e) {
+    // Repli best-effort seulement (quota dépassé, mode privé, ...) : rien à
+    // faire, la source de vérité reste le serveur.
+  }
+}
+
+const dexConfig = {};
+let configServerAvailable = true;
+
+function buildDexConfig(overrides) {
+  for (const dex of GRAPH_DATA.dexNodes) {
+    const defaults = { withdrawFeeUsd: 0, withdrawDelaySeconds: 0, depositFeeUsd: 0, depositDelaySeconds: 0 };
+    dexConfig[dex.name] = Object.assign(defaults, dex.operationalParams || {}, overrides[dex.name] || {});
+  }
+}
+
+function setConfigStatus(text, cssClass) {
+  const el = document.getElementById("configStatus");
+  el.textContent = text;
+  el.className = "config-status" + (cssClass ? " " + cssClass : "");
+}
+
+async function initDexConfig() {
+  try {
+    const res = await fetch("/api/config");
+    if (!res.ok) throw new Error("bad response");
+    buildDexConfig(await res.json());
+    saveStoredConfig(dexConfig); // repli à jour si le serveur devient injoignable plus tard
+  } catch (e) {
+    configServerAvailable = false;
+    buildDexConfig(loadStoredConfig());
+    setConfigStatus(
+      "Not connected to the config server — showing this browser's last known values, edits won't be saved. Serve this page with `python -m visualization.server`.",
+      "config-status-offline"
+    );
+  }
+  renderConfig();
+}
+
+let saveTimer = null;
+async function persistConfig() {
+  saveStoredConfig(dexConfig);
+  if (!configServerAvailable) return;
+  setConfigStatus("Saving…");
+  try {
+    const res = await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dexConfig),
+    });
+    if (!res.ok) throw new Error("save failed");
+    setConfigStatus("Saved", "config-status-ok");
+  } catch (e) {
+    setConfigStatus("Save failed — check the config server", "config-status-error");
+  }
+}
+
+function renderConfig() {
+  const names = GRAPH_DATA.dexNodes.map(d => d.name).sort();
+  document.getElementById("configBody").innerHTML = names.map(name => {
+    const c = dexConfig[name];
+    const cells = CONFIG_FIELDS.map(field =>
+      `<td><input type="number" step="any" data-field="${field}" value="${c[field]}"></td>`
+    ).join("");
+    return `<tr data-dex="${name}"><td class="cfg-name">${name}</td>${cells}</tr>`;
+  }).join("");
+
+  document.getElementById("configBody").querySelectorAll("input").forEach(input => {
+    input.addEventListener("input", () => {
+      const name = input.closest("tr").dataset.dex;
+      const value = parseFloat(input.value);
+      dexConfig[name][input.dataset.field] = Number.isFinite(value) ? value : 0;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(persistConfig, 400);
+    });
+  });
+}
+
+initDexConfig();
 </script>
 </body>
 </html>

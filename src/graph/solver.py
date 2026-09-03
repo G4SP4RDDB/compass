@@ -1,10 +1,14 @@
+from typing import cast
+
 from ortools.sat.python import cp_model
 
 from connectors.exceptions import ConnectorError
 from graph import costing
 from graph.edge import Edge
 from graph.graph import Graph
-from graph.node import NodeType
+from graph.node import NodeType, SourceNode, WithdrawNode
+from graph.structures.DEXes import DEX
+from graph.urgency import TimeWeightParams, computeDexUrgencySigma, computeTimeWeight
 
 # CP-SAT veut des coefficients entiers ; costing.py et Graph._edgeCapacity
 # travaillent en dollars flottants, donc la conversion en entiers ne se fait
@@ -20,47 +24,78 @@ def _scaledInt(value: float | None) -> int:
 
 def buildModel(
     graph: Graph,
-) -> tuple[cp_model.CpModel, list[cp_model.IntVar], list[cp_model.IntVar | None]]:
+    timeWeightParams: TimeWeightParams,
+) -> tuple[cp_model.CpModel, list[cp_model.IntVar], list[cp_model.IntVar | None], list[DEX]]:
+    """Construit le modèle CP-SAT de flot multi-commodité : une commodité par
+    DEX destination déficitaire (voir Graph.deficitDexes). Le coût d'une arête
+    e pour la commodité destinée au DEX d est
+        w(e, d) = Fee(e) + λ(σ_d) · Time(e)
+    Fee(e) est un frais fixe payé une seule fois par arête si elle est
+    utilisée par au moins une commodité (transaction on-chain partagée).
+    λ(σ_d)·Time(e) est facturé par commodité utilisant l'arête (la latence
+    ajoutée retarde chaque destination qui emprunte cette arête, même si la
+    transaction elle-même est mutualisée).
+    """
     graph.computeAllCapacities()
 
+    commodities = graph.deficitDexes()
+    sigmaByDex = {dex: computeDexUrgencySigma(dex) for dex in commodities}
+    timeWeightByDex = {dex: computeTimeWeight(sigmaByDex[dex], timeWeightParams) for dex in commodities}
+
     model = cp_model.CpModel()
-    flowVars: list[cp_model.IntVar] = []
+
+    # flow[i][d] : flot sur l'arête i attribuable à la commodité d.
+    flowVars: list[list[cp_model.IntVar]] = []
+    totalFlowVars: list[cp_model.IntVar] = []
     usedVars: list[cp_model.IntVar | None] = []
     swapCostVars: list[cp_model.IntVar] = []
+    objectiveTerms: list[cp_model.LinearExprT] = []
 
     for i, edge in enumerate(graph.edgeList):
         capacityScaled = _scaledInt(edge.capacity)
-        flow = model.NewIntVar(0, capacityScaled, f"flow_{i}")
-        flowVars.append(flow)
+
+        perCommodityFlows = [
+            model.NewIntVar(0, capacityScaled, f"flow_{i}_{d}") for d in range(len(commodities))
+        ]
+        flowVars.append(perCommodityFlows)
+
+        totalFlow = model.NewIntVar(0, capacityScaled, f"flowTotal_{i}")
+        model.Add(totalFlow == sum(perCommodityFlows))
+        totalFlowVars.append(totalFlow)
 
         if edge.v.type == NodeType.Swap:
-            # coût variable (slippage, fonction du montant) en plus du gas
-            # fee fixe géré ci-dessous comme toute autre arête : voir _addSwapCost
-            swapCostVars.append(_addSwapCost(model, edge, flow, i))
+            # coût variable (slippage, fonction du montant total transporté),
+            # en plus du gas fee fixe géré ci-dessous comme toute autre arête.
+            swapCostVars.append(_addSwapCost(model, edge, totalFlow, i))
 
-        costScaled = _scaledInt(edge.cost)
-        if costScaled == 0:
+        feeScaled = _scaledInt(edge.cost)
+        edgeTime = edge.time or 0.0
+
+        if feeScaled == 0:
             usedVars.append(None)  # arête virtuelle (SourceNode), pas de frais à gater
-            continue
+        else:
+            # frais fixe : payé une seule fois si l'arête est utilisée, quel
+            # que soit le montant transporté (voir la discussion fixed-charge
+            # flow), partagé entre toutes les commodités qui l'empruntent.
+            used = model.NewBoolVar(f"used_{i}")
+            model.Add(totalFlow <= capacityScaled * used)
+            usedVars.append(used)
+            objectiveTerms.append(feeScaled * used)
 
-        # frais fixe : payé une seule fois si l'arête est utilisée, quel que
-        # soit le montant transporté (voir la discussion fixed-charge flow).
-        used = model.NewBoolVar(f"used_{i}")
-        model.Add(flow <= capacityScaled * used)
-        usedVars.append(used)
+        if edgeTime > 0:
+            for d, dex in enumerate(commodities):
+                timeCostScaled = _scaledInt(timeWeightByDex[dex] * edgeTime)
+                if timeCostScaled == 0:
+                    continue
+                commodityUsed = model.NewBoolVar(f"usedTime_{i}_{d}")
+                model.Add(perCommodityFlows[d] <= capacityScaled * commodityUsed)
+                objectiveTerms.append(timeCostScaled * commodityUsed)
 
-    _addFlowConservation(model, graph, flowVars)
+    _addFlowConservation(model, graph, flowVars, commodities)
 
-    model.Minimize(
-        sum(
-            _scaledInt(edge.cost) * used
-            for edge, used in zip(graph.edgeList, usedVars)
-            if used is not None
-        )
-        + sum(swapCostVars)
-    )
+    model.Minimize(sum(objectiveTerms) + sum(swapCostVars))
 
-    return model, flowVars, usedVars
+    return model, totalFlowVars, usedVars, commodities
 
 
 def _addSwapCost(model: cp_model.CpModel, edge: Edge, flow: cp_model.IntVar, index: int) -> cp_model.IntVar:
@@ -90,23 +125,49 @@ def _addSwapCost(model: cp_model.CpModel, edge: Edge, flow: cp_model.IntVar, ind
     return swapCost
 
 
-def _addFlowConservation(model: cp_model.CpModel, graph: Graph, flowVars: list[cp_model.IntVar]) -> None:
-    outflowByNode: dict[int, list[cp_model.IntVar]] = {node.nodeIndex: [] for node in graph.nodeList}
-    inflowByNode: dict[int, list[cp_model.IntVar]] = {node.nodeIndex: [] for node in graph.nodeList}
-    for edge, flow in zip(graph.edgeList, flowVars):
-        outflowByNode[edge.u.nodeIndex].append(flow)
-        inflowByNode[edge.v.nodeIndex].append(flow)
+def _addFlowConservation(
+    model: cp_model.CpModel,
+    graph: Graph,
+    flowVarsByEdge: list[list[cp_model.IntVar]],
+    commodities: list[DEX],
+) -> None:
+    numCommodities = len(commodities)
+    outflowByNode: dict[int, list[list[cp_model.IntVar]]] = {
+        node.nodeIndex: [[] for _ in range(numCommodities)] for node in graph.nodeList
+    }
+    inflowByNode: dict[int, list[list[cp_model.IntVar]]] = {
+        node.nodeIndex: [[] for _ in range(numCommodities)] for node in graph.nodeList
+    }
+    for edge, perCommodityFlows in zip(graph.edgeList, flowVarsByEdge):
+        for d, flow in enumerate(perCommodityFlows):
+            outflowByNode[edge.u.nodeIndex][d].append(flow)
+            inflowByNode[edge.v.nodeIndex][d].append(flow)
 
     for node in graph.nodeList:
-        # SourceNode (déficit <= 0) et WithdrawNode (surplus >= 0) sont les
-        # deux seuls types de nodes avec un supply non nul ; tout le reste
-        # (Deposit, Bridge, Swap) est un pur nœud de transit.
-        supply = _scaledInt(node.balance) if node.type in (NodeType.SourceNode, NodeType.Withdraw) else 0
-        model.Add(sum(outflowByNode[node.nodeIndex]) - sum(inflowByNode[node.nodeIndex]) == supply)
+        if node.type == NodeType.Withdraw:
+            # Source pure et fongible entre commodités : n'importe quel DEX
+            # déficitaire peut consommer ce surplus, seule la somme totale
+            # évacuée est contrainte (pas de répartition imposée par nœud).
+            totalOut = sum(sum(outflowByNode[node.nodeIndex][d]) for d in range(numCommodities))
+            model.Add(totalOut == _scaledInt(cast(WithdrawNode, node).balance))
+            continue
+
+        # SourceNode (déficit <= 0) et WithdrawNode (traité ci-dessus) sont
+        # les deux seuls types de nodes avec un supply non nul ; tout le
+        # reste (Deposit, Bridge, Swap) est un pur nœud de transit pour
+        # chaque commodité. Le supply d'un SourceNode n'est non nul que pour
+        # la commodité de son propre DEX (une commodité par DEX déficitaire).
+        for d, dex in enumerate(commodities):
+            supply = 0
+            if node.type == NodeType.SourceNode and cast(SourceNode, node).dex is dex:
+                supply = _scaledInt(cast(SourceNode, node).balance)
+            model.Add(
+                sum(outflowByNode[node.nodeIndex][d]) - sum(inflowByNode[node.nodeIndex][d]) == supply
+            )
 
 
-def graphSolve(graph: Graph) -> cp_model.CpSolver:
-    model, flowVars, _ = buildModel(graph)
+def graphSolve(graph: Graph, timeWeightParams: TimeWeightParams) -> cp_model.CpSolver:
+    model, totalFlowVars, _, _ = buildModel(graph, timeWeightParams)
 
     solver = cp_model.CpSolver()
     status = solver.Solve(model)
@@ -115,7 +176,7 @@ def graphSolve(graph: Graph) -> cp_model.CpSolver:
             f"Le solveur n'a pas trouvé de solution (status={solver.StatusName(status)})"
         )
 
-    for edge, flow in zip(graph.edgeList, flowVars):
+    for edge, flow in zip(graph.edgeList, totalFlowVars):
         edge.flow = solver.Value(flow) / SCALE
 
     return solver
