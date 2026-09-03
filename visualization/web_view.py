@@ -93,6 +93,38 @@ def _isBridgeCrossing(edge: Edge) -> bool:
     return edge.u.type == NodeType.Bridge and edge.v.type == NodeType.Bridge
 
 
+def _foldBridgeConduitIntoSwap(hops: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Un hop "Bridge" sans traversée réelle (edge.bridgeProtocol jamais
+    renseigné -> "protocol" resté None, voir _isBridgeCrossing/_buildHopList)
+    juste AVANT un "Swap" n'est pas un vrai mouvement cross-chain : c'est
+    l'entrée, SUR LA MÊME CHAIN, dans le réseau de SwapNode (voir
+    Graph._linkSwaps, qui ne relie un SwapNode qu'à des BridgeNode, même
+    quand aucun bridging réel n'a lieu). Sans ce repli, un swap sur une
+    seule chain affiche à tort un hop "Bridge" qui ne traverse jamais
+    aucune chain. On le fusionne donc dans le hop "Swap" qui suit.
+
+    La sortie symétrique (Bridge sans crossing juste APRÈS un Swap) n'a pas
+    besoin du même traitement ici : elle précède toujours le hop Deposit
+    terminal (accounting, voir Graph._addSourceAndDepositNodes), déjà
+    fusionné avec le mouvement qui l'a amenée par _buildHopList — la
+    fusionner ici aussi écraserait le label "Swap" au lieu du label
+    "Bridge" tout aussi trompeur qu'elle porterait sinon."""
+    result: list[dict[str, Any]] = []
+    i = 0
+    while i < len(hops):
+        hop = hops[i]
+        nextHop = hops[i + 1] if i + 1 < len(hops) else None
+        if hop["type"] == "Bridge" and hop["protocol"] is None and nextHop is not None and nextHop["type"] == "Swap":
+            nextHop["from"] = hop["from"]
+            nextHop["cost"] += hop["cost"]
+            nextHop["time"] += hop["time"]
+            i += 1
+            continue
+        result.append(hop)
+        i += 1
+    return result
+
+
 def _buildHopList(edges: list[Edge]) -> list[dict[str, Any]]:
     """Hops visibles d'un chemin/trajet (paths.hops et journeys.hops, voir
     hopHtml côté frontend). Une traversée cross-chain est 3 edges
@@ -144,7 +176,7 @@ def _buildHopList(edges: list[Edge]) -> list[dict[str, Any]]:
                 {
                     "from": describe(edge.u),
                     "to": describe(edge.v),
-                    "cost": edge.cost,
+                    "cost": _edgeCost(edge),
                     "time": edge.time or 0.0,
                     "type": kind,
                     "protocol": None,
@@ -180,6 +212,12 @@ def _buildHopList(edges: list[Edge]) -> list[dict[str, Any]]:
         )
         i = j
 
+    # Une entrée de swap (Bridge sans traversée réelle, voir
+    # _foldBridgeConduitIntoSwap) doit être repliée AVANT la fusion terminale
+    # ci-dessous, sinon elle survivrait comme un hop "Bridge" à part entière
+    # qui ne traverse jamais aucune chain.
+    hops = _foldBridgeConduitIntoSwap(hops)
+
     # Le dernier hop d'un trajet est TOUJOURS Deposit->SourceNode (voir
     # Graph._addSourceAndDepositNodes) : le DEX destination reconnaît/crédite
     # les fonds arrivés. Il n'existe pas d'adresse "appartenant" à ce DEX
@@ -199,6 +237,16 @@ def _buildHopList(edges: list[Edge]) -> list[dict[str, Any]]:
         merged["type"] = "Deposit"
 
     return hops
+
+
+def _edgeCost(edge: Edge) -> float:
+    """Coût affiché d'une edge : Fee(e) (edge.cost, le gas fixe de la tx —
+    voir costing.computeCost) + le slippage RÉEL d'un swap au montant
+    effectivement retenu par le solveur (edge.realizedSlippageUsd, voir
+    graph.solver.graphSolve -> costing.computeRealizedSwapSlippageUsd), 0.0
+    pour toute edge non-Swap. Jamais omis même quand infime : un vrai
+    slippage nul n'est pas la même information qu'un slippage jamais coté."""
+    return (edge.cost or 0.0) + (edge.realizedSlippageUsd or 0.0)
 
 
 def _isInternalHop(edge: Edge) -> bool:
@@ -383,7 +431,7 @@ def computeChosenOperations(graph: Graph) -> list[dict[str, Any]]:
             "from": _describe(edge.u),
             "to": _describe(edge.v),
             "amount": edge.flow,
-            "cost": edge.cost,
+            "cost": _edgeCost(edge),
             "time": edge.time or 0.0,
             "type": _hopKind(edge),
             # Edge-level view (unlike paths/journeys, see _buildHopList) : no
@@ -411,7 +459,7 @@ def _journeyDict(journey: Journey) -> dict[str, Any]:
         "to": journey.toDex,
         "amount": journey.amount,
         "plausible": journey.plausible,
-        "totalCost": sum(edge.cost or 0.0 for edge in visibleHops),
+        "totalCost": sum(_edgeCost(edge) for edge in visibleHops),
         # Somme des délais des hops traversés séquentiellement le long de ce
         # trajet (voir la même remarque dans _computeDexPaths).
         "totalTime": sum(edge.time or 0.0 for edge in visibleHops),

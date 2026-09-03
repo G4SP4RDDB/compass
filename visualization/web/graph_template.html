@@ -352,10 +352,11 @@
 
 <div id="configView">
   <p class="config-hint">
-    Frais et délais opérationnels de dépôt/retrait par DEX (pas encore câblés dans
-    le coût du solveur). Les modifications sont enregistrées directement dans
-    <code>connectors/dex_operational_params.json</code> côté serveur dès que vous
-    quittez un champ — inutile d'avoir accès au code pour les changer.
+    Frais et délais opérationnels de dépôt/retrait par DEX, utilisés par le solveur
+    (voir costing.computeCost/computeDelay). Les modifications sont enregistrées
+    directement dans <code>connectors/dex_operational_params.json</code> côté
+    serveur dès que vous quittez un champ — inutile d'avoir accès au code pour
+    les changer.
   </p>
   <table class="config-table">
     <thead>

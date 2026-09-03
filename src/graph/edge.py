@@ -9,6 +9,15 @@ class Edge:
         self.cost: float | None = None
         self.capacity: float | None = None
         self.flow: float | None = None
+        # Slippage RÉEL d'un swap (v.type==Swap uniquement) au montant EXACT
+        # retenu par le solveur (self.flow), voir graph.solver.graphSolve ->
+        # costing.computeRealizedSwapSlippageUsd. Connu seulement après
+        # résolution -- toujours 0.0 avant, ou pour toute edge non-Swap.
+        # Distinct de self.cost (qui ne porte que le gas fixe de la tx, voir
+        # costing.computeCost) pour ne jamais l'accumuler d'un re-solve à
+        # l'autre (voir visualization/server.py POST /api/solve, qui résout
+        # plusieurs fois le même Graph) : recalculé/écrasé à chaque résolution.
+        self.realizedSlippageUsd: float = 0.0
         # Time(e) : latence absolue en secondes attribuée à cette arête, voir
         # costing.computeDelay. Utilisée dans w(e, d) = Fee(e) + λ(σ_d)·Time(e).
         self.time: float | None = None

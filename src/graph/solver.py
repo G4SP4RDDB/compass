@@ -179,7 +179,28 @@ def graphSolve(graph: Graph, timeWeightParams: TimeWeightParams) -> cp_model.CpS
     for edge, flow in zip(graph.edgeList, totalFlowVars):
         edge.flow = solver.Value(flow) / SCALE
 
+    _applyRealizedSwapSlippage(graph)
+
     return solver
+
+
+def _applyRealizedSwapSlippage(graph: Graph) -> None:
+    """edge.cost d'une edge Swap (voir costing.computeCost) ne porte que le
+    gas fixe de la tx ; le slippage dépend du montant réellement échangé,
+    connu seulement APRÈS résolution (edge.flow). buildModel/_addSwapCost
+    l'a déjà approximé par segments pour piloter le CHOIX du solveur (voir
+    costing.computeSwapCostBreakpoints), mais cette approximation reste
+    interne au modèle CP-SAT. On cote ici, une seule fois par edge Swap
+    utilisée, le montant EXACT retenu (pas les points d'échantillonnage),
+    et on l'écrase dans edge.realizedSlippageUsd — jamais accumulé, ce
+    Graph pouvant être re-résolu plusieurs fois sur un nouveau k (voir
+    visualization/server.py POST /api/solve)."""
+    for edge in graph.edgeList:
+        if edge.v.type != NodeType.Swap:
+            continue
+        edge.realizedSlippageUsd = (
+            costing.computeRealizedSwapSlippageUsd(edge) if edge.flow and edge.flow > 1e-9 else 0.0
+        )
 
 
 def totalCostUsd(solver: cp_model.CpSolver) -> float:

@@ -27,7 +27,9 @@ def computeCost(edge: Edge, gasFeeService: GasFeeService) -> float:
 
     if edge.v.type == NodeType.SourceNode:
         # Dépôt CEX comblant le déficit du DEX destination (DepositNode ->
-        # SourceNode de ce même DEX, idem Graph._addSourceAndDepositNodes).
+        # SourceNode de ce même DEX, idem Graph._addSourceAndDepositNodes) :
+        # même logique que le retrait (frais fixe par DEX, indépendant de la
+        # chain empruntée — voir DEX.withdrawFeeUsd juste au-dessus).
         return cast(SourceNode, edge.v).dex.depositFeeUsd
 
     if edge.v.type == NodeType.Swap:
@@ -95,6 +97,34 @@ def computeSwapCostBreakpoints(
         breakpoints.append((amountInUsd, costUsd))
 
     return _lowerConvexHull(breakpoints)
+
+
+def computeRealizedSwapSlippageUsd(edge: Edge, alchemyConnector: AlchemyConnector | None = None) -> float:
+    """Slippage RÉEL d'un swap au montant EXACT retenu par le solveur
+    (edge.flow) — appelée une fois APRÈS résolution (voir
+    graph.solver.graphSolve), contrairement à computeSwapCostBreakpoints qui
+    échantillonne NUM_SWAP_COST_SEGMENTS points jusqu'à edge.capacity pour
+    construire l'approximation utilisée PENDANT l'optimisation (le montant
+    réel n'est pas encore connu à ce stade). Une seule cotation QuoterV2
+    suffit ici : le montant exact est déjà connu, pas besoin d'interpoler
+    une courbe. edge.cost (voir computeCost) ne porte jamais que le gas fixe
+    de la tx de swap — ce slippage est délibérément gardé séparé (voir
+    Edge.realizedSlippageUsd) pour ne jamais être accumulé d'un re-solve à
+    l'autre du même Graph."""
+    swapNode = edge.v
+    if not isinstance(swapNode, SwapNode):
+        raise ValueError("computeRealizedSwapSlippageUsd attend une edge dont v est un SwapNode")
+    if not edge.flow:
+        raise ValueError("edge.flow doit être connu (post-résolution) pour calculer le slippage réalisé")
+
+    connector = alchemyConnector or AlchemyConnector()
+    sellTokenAddress = get_stable_token_address(swapNode.chain, swapNode.stableIn)
+    buyTokenAddress = get_stable_token_address(swapNode.chain, swapNode.stableOut)
+    unitsPerDollar = 10**STABLE_DECIMALS
+
+    quote = connector.get_quote(swapNode.chain, sellTokenAddress, buyTokenAddress, round(edge.flow * unitsPerDollar))
+    amountOutUsd = quote.buy_amount / unitsPerDollar
+    return max(edge.flow - amountOutUsd, 0.0)
 
 
 def _lowerConvexHull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:

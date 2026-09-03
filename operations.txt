@@ -1,25 +1,26 @@
-23 operations — $31933.17 moved — $5.3003 total fees — ~5m00s to complete (longest single hop)
+24 operations — $36618.32 moved — $5.3547 total fees — ~20m00s to complete (longest single hop)
 
-[Withdraw         ] MEXC withdraw (USDC) -> MEXC deposit AVALANCHE/USDC    amount=$3467.42  cost=$1.0000  delay=300s
-[Deposit          ] dYdX deposit AVALANCHE/USDC -> dYdX    amount=$2467.34  cost=$0.0000  delay=60s
-[On-chain transfer] MEXC deposit AVALANCHE/USDC -> dYdX deposit AVALANCHE/USDC    amount=$2467.34  cost=$0.0001  delay=1s
-[Deposit          ] Aden deposit ETHEREUM/USDT -> Aden    amount=$1874.79  cost=$0.0000  delay=60s
-[Bridge           ] Bridge AVALANCHE/USDC -> Bridge ETHEREUM/USDC    amount=$1874.79  cost=$0.0001  delay=60s  via CCTP V1
-[Bridge           ] Bridge ETHEREUM/USDT -> Aden deposit ETHEREUM/USDT    amount=$1874.79  cost=$0.0637  delay=145s
-[Swap             ] Bridge ETHEREUM/USDC -> Swap USDC->USDT (ETHEREUM)    amount=$1874.79  cost=$0.1684  delay=145s
-[Withdraw         ] Lighter withdraw (USDC) -> Lighter deposit AVALANCHE/USDC    amount=$1817.23  cost=$1.0000  delay=300s
-[Bridge           ] Lighter deposit AVALANCHE/USDC -> Bridge AVALANCHE/USDC    amount=$1817.23  cost=$0.0001  delay=1s
-[Withdraw         ] Gate (Perp DEX) withdraw (USDT) -> Gate (Perp DEX) deposit SOLANA/USDT    amount=$1764.73  cost=$1.0000  delay=300s
-[Deposit          ] Aster deposit ARBITRUM/USDC -> Aster    amount=$1328.94  cost=$0.0000  delay=60s
-[Withdraw         ] Hyperliquid withdraw (USDC) -> Hyperliquid deposit ARBITRUM/USDC    amount=$1328.94  cost=$1.0000  delay=300s
-[On-chain transfer] Hyperliquid deposit ARBITRUM/USDC -> Aster deposit ARBITRUM/USDC    amount=$1328.94  cost=$0.0032  delay=0s
-[Deposit          ] Aster deposit SOLANA/USDT -> Aster    amount=$1066.81  cost=$0.0000  delay=60s
-[On-chain transfer] Gate (Perp DEX) deposit SOLANA/USDT -> Aster deposit SOLANA/USDT    amount=$1066.81  cost=$0.0005  delay=11s
-[Deposit          ] Extended deposit AVALANCHE/USDC -> Extended    amount=$942.52  cost=$0.0000  delay=60s
-[On-chain transfer] MEXC deposit AVALANCHE/USDC -> Extended deposit AVALANCHE/USDC    amount=$942.52  cost=$0.0001  delay=1s
-[Deposit          ] Aden deposit SOLANA/USDT -> Aden    amount=$697.92  cost=$0.0000  delay=60s
-[On-chain transfer] Gate (Perp DEX) deposit SOLANA/USDT -> Aden deposit SOLANA/USDT    amount=$697.92  cost=$0.0005  delay=11s
-[Deposit          ] Aster deposit ETHEREUM/USDC -> Aster    amount=$391.28  cost=$0.0000  delay=60s
-[Withdraw         ] Ondo Perps withdraw (USDC) -> Ondo Perps deposit ETHEREUM/USDC    amount=$391.28  cost=$1.0000  delay=300s
-[On-chain transfer] Ondo Perps deposit ETHEREUM/USDC -> Aster deposit ETHEREUM/USDC    amount=$391.28  cost=$0.0637  delay=145s
-[Bridge           ] MEXC deposit AVALANCHE/USDC -> Bridge AVALANCHE/USDC    amount=$57.56  cost=$0.0001  delay=1s
+[Withdraw         ] Aster withdraw (USDC) -> Aster deposit SOLANA/USDC    amount=$3795.80  cost=$1.0000  delay=300s
+[Bridge           ] Bridge SOLANA/USDC -> Bridge AVALANCHE/USDC    amount=$3795.80  cost=$0.0005  delay=1200s  via Generic
+[Bridge           ] Aster deposit SOLANA/USDC -> Bridge SOLANA/USDC    amount=$3795.80  cost=$0.0005  delay=11s
+[Withdraw         ] dYdX withdraw (USDC) -> dYdX deposit AVALANCHE/USDC    amount=$3169.12  cost=$1.0000  delay=300s
+[Deposit          ] MEXC deposit AVALANCHE/USDC -> MEXC    amount=$2838.79  cost=$0.0000  delay=60s
+[Bridge           ] Bridge AVALANCHE/USDC -> MEXC deposit AVALANCHE/USDC    amount=$2838.79  cost=$0.0003  delay=1s
+[Deposit          ] Lighter deposit AVALANCHE/USDC -> Lighter    amount=$2441.61  cost=$0.0000  delay=60s
+[On-chain transfer] dYdX deposit AVALANCHE/USDC -> Lighter deposit AVALANCHE/USDC    amount=$1772.02  cost=$0.0001  delay=1s
+[Withdraw         ] Aden withdraw (USDT) -> Aden deposit SOLANA/USDT    amount=$1642.22  cost=$1.0000  delay=300s
+[Deposit          ] Gate (Perp DEX) deposit SOLANA/USDT -> Gate (Perp DEX)    amount=$1642.22  cost=$0.0000  delay=60s
+[On-chain transfer] Aden deposit SOLANA/USDT -> Gate (Perp DEX) deposit SOLANA/USDT    amount=$1642.22  cost=$0.0005  delay=11s
+[Deposit          ] Extended deposit AVALANCHE/USDC -> Extended    amount=$1397.10  cost=$0.0000  delay=60s
+[On-chain transfer] dYdX deposit AVALANCHE/USDC -> Extended deposit AVALANCHE/USDC    amount=$1397.10  cost=$0.0001  delay=1s
+[Bridge           ] Bridge AVALANCHE/USDC -> Lighter deposit AVALANCHE/USDC    amount=$669.59  cost=$0.0003  delay=1s
+[Deposit          ] Extended deposit ETHEREUM/USDC -> Extended    amount=$653.01  cost=$0.0000  delay=60s
+[Withdraw         ] Ondo Perps withdraw (USDC) -> Ondo Perps deposit ETHEREUM/USDC    amount=$653.01  cost=$1.0000  delay=300s
+[On-chain transfer] Ondo Perps deposit ETHEREUM/USDC -> Extended deposit ETHEREUM/USDC    amount=$653.01  cost=$0.0768  delay=145s
+[Deposit          ] Gate (Perp DEX) deposit ETHEREUM/USDT -> Gate (Perp DEX)    amount=$287.42  cost=$0.0000  delay=60s
+[Bridge           ] Bridge AVALANCHE/USDC -> Bridge ETHEREUM/USDC    amount=$287.42  cost=$0.0003  delay=60s  via CCTP V1
+[Bridge           ] Bridge ETHEREUM/USDT -> Gate (Perp DEX) deposit ETHEREUM/USDT    amount=$287.42  cost=$0.0693  delay=145s
+[Swap             ] Bridge ETHEREUM/USDC -> Swap USDC->USDT (ETHEREUM)    amount=$287.42  cost=$0.2027  delay=145s
+[Deposit          ] Extended deposit ARBITRUM/USDC -> Extended    amount=$223.81  cost=$0.0000  delay=60s
+[Withdraw         ] Hyperliquid withdraw (USDC) -> Hyperliquid deposit ARBITRUM/USDC    amount=$223.81  cost=$1.0000  delay=300s
+[On-chain transfer] Hyperliquid deposit ARBITRUM/USDC -> Extended deposit ARBITRUM/USDC    amount=$223.81  cost=$0.0033  delay=0s
