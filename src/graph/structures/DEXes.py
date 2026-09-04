@@ -30,9 +30,38 @@ class DEX:
         # retrait), mais jamais entre stables (déposé en USDC -> retiré en
         # USDC, jamais converti implicitement). Doit être rempli AVANT de
         # construire un Graph : WithdrawNode lit cette valeur une seule fois
-        # à la construction (voir Graph._addSourceAndDepositNodes), comme
+        # à la construction (voir Graph._addSourceAndWithdrawNodes), comme
         # inbalance/target.
         self.withdrawBalances: dict[Stable, float] = {}
+        # Certains DEX (ex: Aster) lient le retrait à la chain de dépôt :
+        # un solde crédité via Arbitrum ne peut être retiré que vers Arbitrum,
+        # jamais fongible entre chains comme c'est le cas par défaut. Deux
+        # champs séparés :
+        #   - requiresSameChainWithdraw : LA RÈGLE (ce DEX applique cette
+        #     contrainte ou non) — voir graph.structures.dex_registry pour la
+        #     liste des DEX concernés.
+        #   - withdrawChainByStable : LA DONNÉE (sur quelle chain le solde de
+        #     CETTE stable est actuellement crédité), n'a de sens que si la
+        #     règle ci-dessus est active. Absent/vide -> aucune restriction
+        #     (comportement fongible historique), même si la règle est active
+        #     mais qu'aucun solde n'a encore été assigné à une chain.
+        # Lu par Graph._linkWithdrawalsAndDeposits pour restreindre les edges
+        # WithdrawNode -> WalletNode à la seule chain autorisée.
+        self.requiresSameChainWithdraw: bool = False
+        self.withdrawChainByStable: dict[Stable, Chain] = {}
+        # Tous les DEX du registre aujourd'hui (y compris MEXC, qui crédite
+        # automatiquement dès réception sur son adresse de dépôt) créditent
+        # le dépôt dans LA MÊME transaction que le virement — un seul appel
+        # de contrat/évènement, pas d'adresse de dépôt distincte à surveiller
+        # (voir Graph._linkWithdrawalsAndDeposits, WalletNode -> SourceNode
+        # direct). Un vrai CEX dont le dépôt serait réellement reconnu/crédité
+        # en deux étapes séparées fonctionnerait différemment : on envoie à
+        # une adresse de dépôt dédiée, puis la plateforme reconnaît/crédite
+        # séparément après ses propres délais — DEUX actions distinctes
+        # (WalletNode -> DepositNode -> SourceNode). Faux par défaut (dépôt
+        # direct) ; voir graph.structures.dex_registry pour la liste (vide
+        # aujourd'hui) des DEX qui le mettent à True.
+        self.requiresDepositAddress: bool = False
         # Positions de marge ouvertes sur ce DEX, utilisées pour calculer son
         # urgence de liquidation (voir graph.urgency.computeDexUrgencySigma).
         # Vide par défaut = pas de position ouverte = pas d'urgence.
@@ -44,8 +73,8 @@ class DEX:
         # à affiner à la main via le panel "Config" du frontend (voir
         # visualization/web/graph_template.html) et rechargées par
         # connectors.dex_operational_params. Consommés par
-        # costing.computeCost/computeDelay sur les edges Withdraw->Deposit et
-        # Deposit->SourceNode (voir Graph._addSourceAndDepositNodes).
+        # costing.computeCost/computeDelay sur les edges Withdraw->Wallet et
+        # Wallet/Deposit->SourceNode (voir Graph._linkWithdrawalsAndDeposits).
         self.withdrawFeeUsd: float = DEFAULT_WITHDRAW_FEE_USD
         self.withdrawDelaySeconds: float = DEFAULT_WITHDRAW_DELAY_SECONDS
         self.depositFeeUsd: float = DEFAULT_DEPOSIT_FEE_USD

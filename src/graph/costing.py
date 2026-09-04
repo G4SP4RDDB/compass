@@ -1,60 +1,71 @@
 from typing import cast
 
-from connectors import cctp, chain_block_times
+from connectors import chain_block_times
 from connectors.alchemy import AlchemyConnector
 from connectors.gas import GasFeeService, GasOperation
 from connectors.stable_tokens import STABLE_DECIMALS, get_stable_token_address
-from graph.edge import Edge
-from graph.node import NodeType, SourceNode, SwapNode, WithdrawNode
-from graph.structures.bridges import BridgeProtocol
+from graph.edge import Edge, EdgeType
+from graph.node import NodeType, SourceNode, WalletNode, WithdrawNode
+from graph.structures.bridges import adenBridgeFeeUsd
 from graph.urgency import TimeWeightParams, computeTimeWeight
 
-# Pas de protocole réel modélisé pour GENERIC (voir BridgeProtocol) : ordre de
-# grandeur délibérément conservateur (proche de V1) plutôt qu'un 0.0 qui
-# biaiserait le solveur en faveur d'un bridge dont on ne connaît pas la vitesse.
-GENERIC_BRIDGE_DELAY_SECONDS = 20 * 60
+# Pas de simulation réelle du bridge interne d'Aden (voir BridgeProtocol,
+# GasFeeService.get_bridge_gas_cost_usd) : ordre de grandeur délibérément
+# conservateur plutôt qu'un 0.0 qui biaiserait le solveur en sa faveur alors
+# qu'on ne connaît pas sa vitesse réelle -- à affiner avec de vraies données.
+ADEN_INTERNAL_BRIDGE_DELAY_SECONDS = 20 * 60
 
 
 def computeCost(edge: Edge, gasFeeService: GasFeeService) -> float:
     if edge.u.type == NodeType.Withdraw:
-        # Retrait CEX du DEX surplus (WithdrawNode -> DepositNode de ce même
-        # DEX, voir Graph._addSourceAndDepositNodes) : frais fixe facturé par
-        # la plateforme avant que les fonds soient mobilisables ailleurs dans
+        # Retrait CEX du DEX surplus (WithdrawNode -> WalletNode, voir
+        # Graph._linkWithdrawalsAndDeposits) : frais fixe facturé par la
+        # plateforme avant que les fonds soient mobilisables ailleurs dans
         # le graphe. WithdrawNode n'a pas de `.chain` (scope dex+stable, pas
-        # dex+chain) : sans ce garde-fou en premier, la branche générique
-        # v.type in (Deposit,Bridge) plus bas planterait en lisant edge.u.chain.
+        # dex+chain) : sans ce garde-fou en premier, une branche plus bas
+        # lisant edge.u.chain (Swap, Bridge, Deposit) planterait.
         return cast(WithdrawNode, edge.u).dex.withdrawFeeUsd
 
     if edge.v.type == NodeType.SourceNode:
-        # Dépôt CEX comblant le déficit du DEX destination (DepositNode ->
-        # SourceNode de ce même DEX, idem Graph._addSourceAndDepositNodes) :
-        # même logique que le retrait (frais fixe par DEX, indépendant de la
-        # chain empruntée — voir DEX.withdrawFeeUsd juste au-dessus).
-        return cast(SourceNode, edge.v).dex.depositFeeUsd
+        # Dépôt comblant le déficit du DEX destination (voir
+        # Graph._linkWithdrawalsAndDeposits) — deux formes selon
+        # DEX.requiresDepositAddress :
+        dex = cast(SourceNode, edge.v).dex
+        if edge.u.type == NodeType.Wallet:
+            # Dépôt DIRECT (WalletNode -> SourceNode, tous les DEX du
+            # registre aujourd'hui) : un seul appel de contrat fait à la fois
+            # le virement ET le crédit -- ce seul edge porte donc le gas du
+            # virement EN PLUS du frais de dépôt éventuel du DEX, pas de hop
+            # séparé pour ça.
+            return gasFeeService.get_gas_cost_usd(cast(WalletNode, edge.u).chain, GasOperation.TRANSFER) + dex.depositFeeUsd
+        # DepositNode -> SourceNode (DEX.requiresDepositAddress=True) : le
+        # gas du virement est déjà facturé sur le hop précédent (Wallet ->
+        # DepositNode, branche v.type==Deposit plus bas), ici seulement le
+        # frais de crédit CEX.
+        return dex.depositFeeUsd
 
-    if edge.v.type == NodeType.Swap:
-        # frais fixe de la tx de swap ; le coût variable (slippage) est géré
-        # séparément, voir computeSwapCostBreakpoints
-        return gasFeeService.get_gas_cost_usd(edge.v.chain, GasOperation.SWAP)
+    if edge.type == EdgeType.Swap:
+        # Une seule transaction on-chain, atomique, du wallet source au
+        # wallet destination (voir graph.node.WalletNode) : le frais fixe de
+        # la tx couvre toute l'opération. Le coût variable (slippage) est géré
+        # séparément, voir computeSwapCostBreakpoints.
+        return gasFeeService.get_gas_cost_usd(edge.u.chain, GasOperation.SWAP)
 
-    if edge.u.type == NodeType.Swap:
-        # sortie du swap (Swap -> Bridge de la stable de sortie) : pure
-        # comptabilité, déjà facturé à l'entrée juste au-dessus. Sans ce
-        # garde-fou, la branche générique v.type in (Deposit,Bridge) plus bas
-        # facturerait un second gas fee (TRANSFER) pour la même opération.
-        return 0.0
-
-    if edge.u.type == NodeType.Bridge and edge.v.type == NodeType.Bridge:
-        # Bridge->Bridge traverse deux chains différentes : le gas est payé
-        # sur la chain de départ pour initier le transfert. Une edge par
-        # protocole disponible (voir Graph._linkBridges) : edge.bridgeProtocol
-        # dit lequel pricer.
+    if edge.type == EdgeType.Bridge:
+        # Bridge traverse deux chains différentes en un seul appel de contrat :
+        # le gas est payé une seule fois, sur la chain de départ, pour toute
+        # l'opération. Seule route bridgée aujourd'hui : le bridge interne
+        # d'Aden entre BSC et Arbitrum (voir graph.structures.bridges), qui
+        # facture EN PLUS son propre frais fixe, PAR SENS (pas symétrique) --
+        # même logique que gas + dex.depositFeeUsd juste au-dessus, mais côté
+        # bridge plutôt que côté dépôt.
         assert edge.bridgeProtocol is not None
-        return gasFeeService.get_bridge_gas_cost_usd(edge.u.chain, edge.v.chain, edge.u.stable, edge.bridgeProtocol)
+        gasCost = gasFeeService.get_bridge_gas_cost_usd(edge.u.chain, edge.v.chain, edge.bridgeProtocol)
+        return gasCost + adenBridgeFeeUsd(edge.u.chain, edge.v.chain)
 
-    if edge.v.type in (NodeType.Deposit, NodeType.Bridge):
-        # Deposit<->Deposit et Deposit<->Bridge sont toujours sur la même chain
-        # (voir Graph._linkImbalancedDeposits / _linkBridges).
+    if edge.v.type == NodeType.Deposit:
+        # Wallet->DepositNode (entrée CEX-style, voir DEX.requiresDepositAddress) :
+        # toujours sur la même chain des deux côtés.
         return gasFeeService.get_gas_cost_usd(edge.u.chain, GasOperation.TRANSFER)
 
     return 0.0
@@ -75,22 +86,22 @@ def computeSwapCostBreakpoints(
     donc le montant de sortie réel. L'enveloppe convexe reste un filet de
     sécurité bon marché si les ticks traversés cassent la convexité stricte.
     """
-    swapNode = edge.v
-    if not isinstance(swapNode, SwapNode):
-        raise ValueError("computeSwapCostBreakpoints attend une edge dont v est un SwapNode")
+    if edge.type != EdgeType.Swap:
+        raise ValueError("computeSwapCostBreakpoints attend une edge de type EdgeType.Swap")
     if edge.capacity is None:
         raise ValueError("edge.capacity doit être calculé avant d'estimer le coût du swap")
 
+    walletIn, walletOut = cast(WalletNode, edge.u), cast(WalletNode, edge.v)
     connector = alchemyConnector or AlchemyConnector()
-    sellTokenAddress = get_stable_token_address(swapNode.chain, swapNode.stableIn)
-    buyTokenAddress = get_stable_token_address(swapNode.chain, swapNode.stableOut)
+    sellTokenAddress = get_stable_token_address(walletIn.chain, walletIn.stable)
+    buyTokenAddress = get_stable_token_address(walletIn.chain, walletOut.stable)
     unitsPerDollar = 10**STABLE_DECIMALS
 
     breakpoints: list[tuple[float, float]] = [(0.0, 0.0)]
     for step in range(1, NUM_SWAP_COST_SEGMENTS + 1):
         amountInUsd = edge.capacity * step / NUM_SWAP_COST_SEGMENTS
         quote = connector.get_quote(
-            swapNode.chain, sellTokenAddress, buyTokenAddress, round(amountInUsd * unitsPerDollar)
+            walletIn.chain, sellTokenAddress, buyTokenAddress, round(amountInUsd * unitsPerDollar)
         )
         amountOutUsd = quote.buy_amount / unitsPerDollar
         costUsd = max(amountInUsd - amountOutUsd, 0.0)
@@ -111,18 +122,18 @@ def computeRealizedSwapSlippageUsd(edge: Edge, alchemyConnector: AlchemyConnecto
     de la tx de swap — ce slippage est délibérément gardé séparé (voir
     Edge.realizedSlippageUsd) pour ne jamais être accumulé d'un re-solve à
     l'autre du même Graph."""
-    swapNode = edge.v
-    if not isinstance(swapNode, SwapNode):
-        raise ValueError("computeRealizedSwapSlippageUsd attend une edge dont v est un SwapNode")
+    if edge.type != EdgeType.Swap:
+        raise ValueError("computeRealizedSwapSlippageUsd attend une edge de type EdgeType.Swap")
     if not edge.flow:
         raise ValueError("edge.flow doit être connu (post-résolution) pour calculer le slippage réalisé")
 
+    walletIn, walletOut = cast(WalletNode, edge.u), cast(WalletNode, edge.v)
     connector = alchemyConnector or AlchemyConnector()
-    sellTokenAddress = get_stable_token_address(swapNode.chain, swapNode.stableIn)
-    buyTokenAddress = get_stable_token_address(swapNode.chain, swapNode.stableOut)
+    sellTokenAddress = get_stable_token_address(walletIn.chain, walletIn.stable)
+    buyTokenAddress = get_stable_token_address(walletIn.chain, walletOut.stable)
     unitsPerDollar = 10**STABLE_DECIMALS
 
-    quote = connector.get_quote(swapNode.chain, sellTokenAddress, buyTokenAddress, round(edge.flow * unitsPerDollar))
+    quote = connector.get_quote(walletIn.chain, sellTokenAddress, buyTokenAddress, round(edge.flow * unitsPerDollar))
     amountOutUsd = quote.buy_amount / unitsPerDollar
     return max(edge.flow - amountOutUsd, 0.0)
 
@@ -153,27 +164,36 @@ def computeDelay(edge: Edge) -> float:
         return cast(WithdrawNode, edge.u).dex.withdrawDelaySeconds
 
     if edge.v.type == NodeType.SourceNode:
-        # Délai de traitement du dépôt CEX comblant le déficit du DEX destination.
-        return cast(SourceNode, edge.v).dex.depositDelaySeconds
+        dex = cast(SourceNode, edge.v).dex
+        if edge.u.type == NodeType.Wallet:
+            # Dépôt DIRECT (voir computeCost) : ce même edge porte aussi la
+            # confirmation on-chain du virement, pas de hop séparé pour ça.
+            return chain_block_times.get_block_delay_seconds(cast(WalletNode, edge.u).chain) + dex.depositDelaySeconds
+        # DepositNode -> SourceNode (DEX.requiresDepositAddress=True) : la
+        # confirmation on-chain est déjà comptée sur le hop précédent
+        # (Wallet -> DepositNode), ici seulement le délai de traitement CEX.
+        return dex.depositDelaySeconds
 
-    if edge.u.type == NodeType.Bridge and edge.v.type == NodeType.Bridge:
-        # Traversée inter-chain réelle : le délai dépend du protocole (une
-        # edge par protocole, voir Graph._linkBridges).
+    if edge.type == EdgeType.Bridge:
+        # Traversée inter-chain réelle, en une seule tx atomique (voir
+        # computeCost) : le délai dépend du protocole (une edge par
+        # protocole, voir Graph._linkBridges), pas de la chain de départ.
         return computeBridgeDelay(edge)
 
-    # Toute autre edge (Deposit<->Deposit, Deposit<->Bridge, Bridge<->Swap) ne
-    # quitte jamais sa chain d'origine (voir Graph._linkImbalancedDeposits /
-    # _linkBridges / _linkSwaps) : une tx on-chain doit encore attendre sa
-    # confirmation avant que les fonds soient mobilisables ailleurs, jamais
-    # 0s. edge.u a toujours .chain ici (Withdraw/SourceNode déjà retournés
+    # Toute autre edge (Wallet->DepositNode, Wallet->Wallet Swap) ne quitte
+    # jamais sa chain d'origine (voir Graph._linkWithdrawalsAndDeposits /
+    # _linkSwaps) : une tx on-chain doit encore attendre sa confirmation
+    # avant que les fonds soient mobilisables ailleurs, jamais 0s — UNE SEULE
+    # fois, cette edge étant la tx entière (voir computeCost pour Swap).
+    # edge.u a toujours .chain ici (Withdraw/SourceNode déjà retournés
     # ci-dessus), et edge.u.chain == edge.v.chain par construction.
     return chain_block_times.get_block_delay_seconds(edge.u.chain)
 
 
 def computeBridgeDelay(edge: Edge) -> float:
+    # Un seul protocole existe aujourd'hui (voir graph.structures.bridges.
+    # BridgeProtocol) : pas de branchement à faire, juste le placeholder
+    # conservateur ci-dessus tant qu'on n'a pas de vraie donnée sur le bridge
+    # interne d'Aden.
     assert edge.bridgeProtocol is not None
-    if edge.bridgeProtocol == BridgeProtocol.CCTP_V1:
-        return cctp.CCTP_V1_DELAY_SECONDS_BY_CHAIN[edge.u.chain]
-    if edge.bridgeProtocol == BridgeProtocol.CCTP_V2:
-        return cctp.CCTP_V2_FAST_TRANSFER_DELAY_SECONDS
-    return GENERIC_BRIDGE_DELAY_SECONDS
+    return ADEN_INTERNAL_BRIDGE_DELAY_SECONDS

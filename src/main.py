@@ -30,7 +30,7 @@ class _ZeroGasFeeService(GasFeeService):
     def get_gas_cost_usd(self, chain, operation) -> float:
         return 0.0
 
-    def get_bridge_gas_cost_usd(self, source_chain, destination_chain, stable, protocol) -> float:
+    def get_bridge_gas_cost_usd(self, source_chain, destination_chain, protocol) -> float:
         return 0.0
 
 
@@ -77,13 +77,23 @@ def _generateRandomImbalances(dexList: list[DEX], seed: int | None = DEMO_IMBALA
     for dex, cents in zip(surplusDexes, surplusCents):
         stable = rng.choice(dex.stables)
         dex.withdrawBalances = {stable: cents / 100}
+        # dex.requiresSameChainWithdraw (ex: Aster) : ce surplus n'est
+        # évacuable QUE vers la chain où il a été crédité (voir
+        # Graph._linkWithdrawalsAndDeposits) — faute de vraie donnée de
+        # balance par chain (voir connectors/zfund.py, pas encore branché),
+        # on tire cette chain au hasard parmi celles du DEX, comme le reste
+        # de cette fonction de démo.
+        if dex.requiresSameChainWithdraw:
+            dex.withdrawChainByStable = {stable: rng.choice(dex.chains)}
 
     print("Déséquilibres aléatoires générés :")
     for dex in deficitDexes:
         print(f"  - {dex.name}: déficit ${-dex.inbalance:.2f}")
     for dex in surplusDexes:
         stable, amount = next(iter(dex.withdrawBalances.items()))
-        print(f"  - {dex.name}: surplus ${amount:.2f} ({stable.name})")
+        chain = dex.withdrawChainByStable.get(stable)
+        chainNote = f", withdrawable only on {chain.name}" if chain is not None else ""
+        print(f"  - {dex.name}: surplus ${amount:.2f} ({stable.name}{chainNote})")
 
 
 def buildAndSolveGraph(seed: int | None = DEMO_IMBALANCE_SEED) -> tuple[Graph, dict[str, DEX], TimeWeightParams]:

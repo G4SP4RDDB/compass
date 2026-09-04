@@ -194,6 +194,12 @@
   .path-head .cost { color: var(--muted); }
   .path-hops { padding: 0 2px 10px 18px; display: none; }
   .path-hops.expanded { display: block; }
+  /* Sous-bloc non-interactif (cheapest/fastest route, "Chosen by the solver"
+     journey) : volontairement distinct de .path-head, qui est re-scanné par
+     querySelectorAll(".path-head") à chaque renderDexDetails et deviendrait
+     toggleable par erreur si on le réutilisait ici. */
+  .route-head { display: flex; align-items: center; gap: 6px; padding: 5px 2px; font-weight: 600; }
+  .route-head .cost { color: var(--muted); font-weight: 400; }
   .hop { font-size: 10.5px; padding: 3px 0; border-left: 2px solid var(--border); padding-left: 8px; margin-bottom: 2px; color: var(--muted); }
   .hop b { color: var(--text); font-weight: 500; }
   .hop .hop-cost { float: right; }
@@ -416,10 +422,22 @@ document.getElementById("centerMark").setAttribute("font-size", Math.max(18, rin
 // Chaque paire (X, Y) atteignable devient une seule arête directe : le chemin
 // réel (via bridges/swaps) reste calculé côté Python (voir web_view.py
 // _computeDexPaths) et n'est affiché qu'au clic, dans le panneau latéral.
+// GRAPH_DATA.paths[from][to] porte DEUX chemins estimés (cheapest/fastest,
+// voir _routesFromSource) : l'arc dessiné sur l'anneau (largeur/couleur/
+// label) reste piloté par "cheapest" comme avant, "fastest" n'est utilisé
+// qu'au clic dans le panneau latéral (voir renderEdgeDetails/routeBlockHtml).
 const pathEdges = [];
 for (const [fromName, targets] of Object.entries(GRAPH_DATA.paths)) {
   for (const [toName, path] of Object.entries(targets)) {
-    pathEdges.push({ from: fromName, to: toName, cost: path.totalCost, time: path.totalTime, hops: path.hops });
+    pathEdges.push({
+      from: fromName,
+      to: toName,
+      cost: path.cheapest.totalCost,
+      time: path.cheapest.totalTime,
+      hops: path.cheapest.hops,
+      cheapest: path.cheapest,
+      fastest: path.fastest,
+    });
   }
 }
 const maxCost = Math.max(1e-9, ...pathEdges.map(e => e.cost));
@@ -476,6 +494,32 @@ function hopHtml(h) {
   // CCTP V2), null for any non-Bridge hop.
   const protocol = h.protocol ? ` <span class="hop-protocol">via ${h.protocol}</span>` : "";
   return `<div class="hop type-${typeSlug(h.type)}">${typeTag(h.type)} <span class="hop-cost">${fmt(h.cost)} · ${fmtDuration(h.time)}</span><b>${h.from}</b> → ${h.to}${protocol}</div>`;
+}
+// Deux estimations Dijkstra indépendantes (voir web_view.py:_computeDexPaths)
+// coïncident souvent (même route la moins chère et la plus rapide) : plutôt
+// que d'afficher deux blocs identiques, on les fusionne quand les hops sont
+// exactement la même séquence.
+function routesEqual(a, b) {
+  return (
+    a.hops.length === b.hops.length &&
+    a.hops.every((h, i) => h.from === b.hops[i].from && h.to === b.hops[i].to && h.type === b.hops[i].type && h.protocol === b.hops[i].protocol)
+  );
+}
+function routeBlockHtml(label, route) {
+  const hops = route.hops.map(hopHtml).join("") || `<div class="hop">direct — no intermediate hop</div>`;
+  return `
+    <div class="path-row">
+      <div class="route-head">
+        <span style="flex:1">${label}</span>
+        <span class="cost">${fmt(route.totalCost)} · ${fmtDuration(route.totalTime)}</span>
+      </div>
+      <div class="path-hops expanded">${hops}</div>
+    </div>`;
+}
+function routesSectionHtml(cheapest, fastest) {
+  return routesEqual(cheapest, fastest)
+    ? routeBlockHtml("Cheapest & fastest", cheapest)
+    : routeBlockHtml("Cheapest", cheapest) + routeBlockHtml("Fastest", fastest);
 }
 
 function edgeGeometry(a, b) {
@@ -666,7 +710,9 @@ function nodeTooltipHtml(dex) {
           <div>chains: ${dex.chains.length}</div>`;
 }
 function edgeTooltipHtml(e, journeys) {
-  let html = `<div><b>${e.from}</b> → <b>${e.to}</b></div><div>cheapest route cost: ${fmt(e.cost)} · ${fmtDuration(e.time)}</div>`;
+  let html = `<div><b>${e.from}</b> → <b>${e.to}</b></div>
+    <div>cheapest: ${fmt(e.cheapest.totalCost)} · ${fmtDuration(e.cheapest.totalTime)}</div>
+    <div>fastest: ${fmt(e.fastest.totalCost)} · ${fmtDuration(e.fastest.totalTime)}</div>`;
   if (journeys) {
     const total = journeys.reduce((s, j) => s + j.amount, 0);
     const approx = journeys.some(j => j.plausible);
@@ -696,20 +742,27 @@ function renderDexDetails(dex) {
   const targets = GRAPH_DATA.paths[dex.name] || {};
   const stableChips = dex.stables.map(s => {
     const bal = dex.withdrawBalances[s] || 0;
-    return `<span class="chip">${s}: ${fmt(bal)}</span>`;
+    // dex.withdrawChainByStable (voir DEX.requiresSameChainWithdraw côté
+    // Python, ex: Aster) : ce solde n'est retirable QUE vers cette chain,
+    // pas fongible entre chains comme c'est le cas par défaut ailleurs.
+    const restrictedChain = dex.withdrawChainByStable[s];
+    const chainNote = restrictedChain ? ` (${restrictedChain} only)` : "";
+    return `<span class="chip">${s}: ${fmt(bal)}${chainNote}</span>`;
   }).join("") || `<span class="chip">none</span>`;
   const chainChips = dex.chains.map(c => `<span class="chip">${c}</span>`).join("");
 
-  const rows = Object.entries(targets).sort((a, b) => a[1].totalCost - b[1].totalCost).map(([toName, path]) => {
-    const hops = path.hops.map(hopHtml).join("") || `<div class="hop">direct — no intermediate hop</div>`;
+  const rows = Object.entries(targets).sort((a, b) => a[1].cheapest.totalCost - b[1].cheapest.totalCost).map(([toName, path]) => {
+    // Chevron header stays keyed on the cheapest route (sort order, summary
+    // stat) ; expanding it reveals BOTH cheapest and fastest, merged into one
+    // block when they're the same route — see routesSectionHtml.
     return `
       <div class="path-row">
         <div class="path-head" data-target="${toName}">
           <span class="chevron">▶</span>
           <span class="name" data-nav="${toName}">${toName}</span>
-          <span class="cost">${fmt(path.totalCost)} · ${fmtDuration(path.totalTime)}</span>
+          <span class="cost">${fmt(path.cheapest.totalCost)} · ${fmtDuration(path.cheapest.totalTime)}</span>
         </div>
-        <div class="path-hops">${hops}</div>
+        <div class="path-hops">${routesSectionHtml(path.cheapest, path.fastest)}</div>
       </div>`;
   }).join("") || `<div class="no-paths">No route found to any other DEX (no withdrawable stable configured).</div>`;
 
@@ -775,7 +828,7 @@ function selectEdge(e, journeys) {
 }
 
 function renderEdgeDetails(e, journeys) {
-  const hops = e.hops.map(hopHtml).join("") || `<div class="hop">direct — no intermediate hop</div>`;
+  const routesSection = routesSectionHtml(e.cheapest, e.fastest);
 
   let journeySection = "";
   if (journeys) {
@@ -803,11 +856,9 @@ function renderEdgeDetails(e, journeys) {
     <h2>Details</h2>
     <dl>
       <dt>Route</dt><dd>${e.from} → ${e.to}</dd>
-      <dt>Estimated cost</dt><dd>${fmt(e.cost)}$</dd>
-      <dt>Estimated time</dt><dd>${fmtDuration(e.time)}</dd>
     </dl>
-    <h2>Hops</h2>
-    ${hops}
+    <h2>Estimated routes</h2>
+    ${routesSection}
     ${journeySection}`;
 }
 

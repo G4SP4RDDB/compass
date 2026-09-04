@@ -12,26 +12,32 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import networkx as nx  # noqa: E402
 
-from graph.edge import Edge
+from graph.edge import Edge, EdgeType
 from graph.graph import Graph
 from graph.node import Node, NodeType
 
 NODE_COLOR_BY_TYPE = {
     NodeType.SourceNode: "gold",
     NodeType.Withdraw: "khaki",
+    NodeType.Wallet: "lightsteelblue",
     NodeType.Deposit: "skyblue",
-    NodeType.Bridge: "lightgreen",
-    NodeType.Swap: "orange",
 }
 
-# Position en colonnes : Source/Withdraw -> Deposit/Swap -> Bridge, pour
-# retrouver visuellement le sens du flot plutôt qu'un nuage de points désordonné.
+# Position en colonnes : Source/Withdraw -> Wallet (partagé) -> Deposit
+# (adresse CEX-style), pour retrouver visuellement le sens du flot plutôt
+# qu'un nuage de points désordonné. Bridge/Swap n'ont plus de node dédié
+# (voir graph.node.WalletNode) : ce sont des edges Wallet->Wallet, voir
+# EDGE_COLOR_BY_TYPE pour les distinguer visuellement.
 NODE_LAYER_BY_TYPE = {
     NodeType.SourceNode: 0,
     NodeType.Withdraw: 0,
-    NodeType.Deposit: 1,
-    NodeType.Swap: 1,
-    NodeType.Bridge: 2,
+    NodeType.Wallet: 1,
+    NodeType.Deposit: 2,
+}
+
+EDGE_COLOR_BY_TYPE = {
+    EdgeType.Bridge: "lightgreen",
+    EdgeType.Swap: "orange",
 }
 
 
@@ -40,17 +46,17 @@ def _nodeLabel(node: Node) -> str:
         return f"{node.dex.name}\nbal={node.balance:g}"
     if node.type == NodeType.Withdraw:
         return f"{node.dex.name}\n{node.stable.name}\nbal={node.balance:g}"
+    if node.type == NodeType.Wallet:
+        return f"Wallet\n{node.chain.name}/{node.stable.name}"
     if node.type == NodeType.Deposit:
         return f"{node.dex.name}\n{node.chain.name}/{node.stable.name}"
-    if node.type == NodeType.Bridge:
-        return f"Bridge\n{node.chain.name}/{node.stable.name}"
-    if node.type == NodeType.Swap:
-        return f"Swap\n{node.stableIn.name}->{node.stableOut.name}"
     return node.type.name
 
 
 def _edgeLabel(edge: Edge) -> str | None:
     parts = []
+    if edge.type is not None:
+        parts.append(edge.type.name)
     if edge.cost is not None:
         parts.append(f"cost={edge.cost:.2f}")
     if edge.capacity is not None:
@@ -71,7 +77,12 @@ def buildNetworkxGraph(graph: Graph) -> nx.DiGraph:
         )
 
     for edge in graph.edgeList:
-        nxGraph.add_edge(nodeToId[edge.u], nodeToId[edge.v], label=_edgeLabel(edge))
+        nxGraph.add_edge(
+            nodeToId[edge.u],
+            nodeToId[edge.v],
+            label=_edgeLabel(edge),
+            color=EDGE_COLOR_BY_TYPE.get(edge.type, "gray"),
+        )
 
     return nxGraph
 
@@ -88,6 +99,7 @@ def renderGraph(graph: Graph, outputPath: str = "graph.png", show: bool = False)
 
     colors = [data["color"] for _, data in nxGraph.nodes(data=True)]
     labels = {nodeId: data["label"] for nodeId, data in nxGraph.nodes(data=True)}
+    edgeColors = [data["color"] for _, _, data in nxGraph.edges(data=True)]
     edgeLabels = {
         (u, v): data["label"] for u, v, data in nxGraph.edges(data=True) if data.get("label")
     }
@@ -104,6 +116,7 @@ def renderGraph(graph: Graph, outputPath: str = "graph.png", show: bool = False)
         positions,
         labels=labels,
         node_color=colors,
+        edge_color=edgeColors,
         node_size=900,
         font_size=6,
         arrows=True,
@@ -131,7 +144,7 @@ if __name__ == "__main__":
         def get_gas_cost_usd(self, chain, operation) -> float:
             return 1.0
 
-        def get_bridge_gas_cost_usd(self, source_chain, destination_chain, stable, protocol) -> float:
+        def get_bridge_gas_cost_usd(self, source_chain, destination_chain, protocol) -> float:
             return 1.0
 
     dexA = DEX([Chain.ETHEREUM, Chain.BASE], [Stable.USDC])

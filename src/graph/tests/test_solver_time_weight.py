@@ -4,7 +4,7 @@ import pytest
 
 from connectors.gas import GasFeeService
 from graph.graph import Graph
-from graph.node import DepositNode, NodeType
+from graph.node import NodeType, SourceNode, WalletNode
 from graph.solver import graphSolve, totalCostUsd
 from graph.structures.DEXes import DEX, Chain, Stable
 from graph.structures.positions import Position
@@ -21,24 +21,29 @@ class _ZeroGasFeeService(GasFeeService):
     def get_gas_cost_usd(self, chain, operation) -> float:
         return 0.0
 
-    def get_bridge_gas_cost_usd(self, source_chain, destination_chain, stable, protocol) -> float:
+    def get_bridge_gas_cost_usd(self, source_chain, destination_chain, protocol) -> float:
         return 0.0
 
 
-def _depositEdge(graph: Graph, fromDex: DEX, toDex: DEX, chain: Chain) -> object:
+def _depositEdge(graph: Graph, toDex: DEX, chain: Chain) -> object:
+    """L'edge de dépôt DIRECT (WalletNode -> SourceNode, voir
+    DEX.requiresDepositAddress=False, le défaut) vers `toDex` sur `chain` —
+    WalletNode est partagé entre tous les DEX (pas de "fromDex" à filtrer),
+    voir Graph._linkWithdrawalsAndDeposits."""
     for edge in graph.edgeList:
-        if edge.u.type != NodeType.Deposit or edge.v.type != NodeType.Deposit:
+        if edge.u.type != NodeType.Wallet or edge.v.type != NodeType.SourceNode:
             continue
-        u, v = cast(DepositNode, edge.u), cast(DepositNode, edge.v)
-        if u.dex is fromDex and v.dex is toDex and u.chain == chain and v.chain == chain:
+        wallet = cast(WalletNode, edge.u)
+        if wallet.chain == chain and cast(SourceNode, edge.v).dex is toDex:
             return edge
-    raise AssertionError(f"aucune arête deposit->deposit {fromDex.name}->{toDex.name} sur {chain}")
+    raise AssertionError(f"aucune arête wallet->source vers {toDex.name} sur {chain}")
 
 
 def _zeroOperationalParams(dex: DEX) -> DEX:
     """Neutralise les frais/délais de dépôt/retrait CEX (voir DEX.__init__) :
-    ces tests isolent le comportement de λ(σ_d) sur des edges deposit->deposit
-    fabriquées à la main, pas les défauts DEFAULT_WITHDRAW_*/DEFAULT_DEPOSIT_*."""
+    ces tests isolent le comportement de λ(σ_d) sur des edges wallet->source
+    dont cost/time sont réécrits à la main, pas les défauts
+    DEFAULT_WITHDRAW_*/DEFAULT_DEPOSIT_*."""
     dex.withdrawFeeUsd = 0.0
     dex.withdrawDelaySeconds = 0.0
     dex.depositFeeUsd = 0.0
@@ -68,11 +73,10 @@ class TestTwoCommoditiesSameLatency:
             [dexUrgent, dexNormal, dexSurplus],
             swapList=[],
             gasFeeService=_ZeroGasFeeService(),
-            bridgeList=[],
         )
 
-        edgeToUrgent = _depositEdge(graph, dexSurplus, dexUrgent, Chain.ETHEREUM)
-        edgeToNormal = _depositEdge(graph, dexSurplus, dexNormal, Chain.ETHEREUM)
+        edgeToUrgent = _depositEdge(graph, dexUrgent, Chain.ETHEREUM)
+        edgeToNormal = _depositEdge(graph, dexNormal, Chain.ETHEREUM)
         edgeToUrgent.time = 100.0
         edgeToNormal.time = 100.0
 
@@ -84,7 +88,7 @@ class TestTwoCommoditiesSameLatency:
 
         solver = graphSolve(graph, params)
 
-        edgeToUrgent = _depositEdge(graph, dexSurplus, dexUrgent, Chain.ETHEREUM)
+        edgeToUrgent = _depositEdge(graph, dexUrgent, Chain.ETHEREUM)
         # both edges must still carry their full $50 (no cheaper alternative)
         assert edgeToUrgent.flow == pytest.approx(50.0)
 
@@ -111,11 +115,10 @@ class TestUrgencyFlipsRoutingChoice:
             [dexDeficit, dexSurplus],
             swapList=[],
             gasFeeService=_ZeroGasFeeService(),
-            bridgeList=[],
         )
 
-        slowCheap = _depositEdge(graph, dexSurplus, dexDeficit, Chain.ETHEREUM)
-        fastExpensive = _depositEdge(graph, dexSurplus, dexDeficit, Chain.ARBITRUM)
+        slowCheap = _depositEdge(graph, dexDeficit, Chain.ETHEREUM)
+        fastExpensive = _depositEdge(graph, dexDeficit, Chain.ARBITRUM)
 
         slowCheap.cost, slowCheap.time = 1.0, 100.0
         fastExpensive.cost, fastExpensive.time = 20.0, 1.0

@@ -31,7 +31,7 @@ from .solana_rpc import SolanaRPCConnector
 # - L2 optimistic (Arbitrum/Optimism/Base) : 1 block suffit en pratique, le
 #   séquenceur unique ne reorg quasiment jamais son propre ordering ; la
 #   finalité L1 complète (~15-20 min) est un phénomène différent, déjà
-#   modélisé séparément pour CCTP V1 (voir connectors/cctp.py).
+#   modélisé séparément pour le bridge (voir graph.costing.ADEN_INTERNAL_BRIDGE_DELAY_SECONDS).
 # - Avalanche (consensus Snowman) : finalité sub-seconde, 1 block suffit.
 # - Polygon PoS : historiquement sujet à des reorgs profonds, 128 blocks
 #   reste la recommandation standard prudente (checkpoints L1 espacés).

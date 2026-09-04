@@ -4,7 +4,7 @@ from ortools.sat.python import cp_model
 
 from connectors.exceptions import ConnectorError
 from graph import costing
-from graph.edge import Edge
+from graph.edge import Edge, EdgeType
 from graph.graph import Graph
 from graph.node import NodeType, SourceNode, WithdrawNode
 from graph.structures.DEXes import DEX
@@ -63,7 +63,7 @@ def buildModel(
         model.Add(totalFlow == sum(perCommodityFlows))
         totalFlowVars.append(totalFlow)
 
-        if edge.v.type == NodeType.Swap:
+        if edge.type == EdgeType.Swap:
             # coût variable (slippage, fonction du montant total transporté),
             # en plus du gas fee fixe géré ci-dessous comme toute autre arête.
             swapCostVars.append(_addSwapCost(model, edge, totalFlow, i))
@@ -196,7 +196,7 @@ def _applyRealizedSwapSlippage(graph: Graph) -> None:
     Graph pouvant être re-résolu plusieurs fois sur un nouveau k (voir
     visualization/server.py POST /api/solve)."""
     for edge in graph.edgeList:
-        if edge.v.type != NodeType.Swap:
+        if edge.type != EdgeType.Swap:
             continue
         edge.realizedSlippageUsd = (
             costing.computeRealizedSwapSlippageUsd(edge) if edge.flow and edge.flow > 1e-9 else 0.0
