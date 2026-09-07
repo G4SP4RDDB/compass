@@ -1,8 +1,8 @@
 """Aster — deposit is a documented on-chain vault contract call; withdraw
-needs Aster's own REST auth (V3 "Pro API-Key" — see aster_signing.py for the
-REAL scheme, confirmed live 2026-09-04; it is NOT what Aster's public docs
-describe, see that module's docstring) PLUS a separate EIP-712 wallet
-signature authorizing the withdrawal itself.
+needs Aster's own REST auth (V3 "Pro API-Key", an EIP-712 signature over the
+query string by the agent key — see aster_signing.py, verified live
+2026-09-07) PLUS a separate EIP-712 wallet signature authorizing the
+withdrawal itself.
 
 Source: https://github.com/asterdex/api-docs/blob/master/demo/aster-deposit-withdrawal.md
 (fetched verbatim 2026-09-04). Cross-checked the vault contract addresses
@@ -43,6 +43,17 @@ Aster's own dedicated env vars (ASTER_USER / ASTER_SIGNER / ASTER_PRIVATE_KEY,
 already in piggybank-arb/.env for trading) are reused directly here rather
 than the generic operating wallet — they are unambiguous for this one DEX,
 unlike the cross-DEX operating wallet key (see README.md "Operating wallet").
+
+Re-fetched 2026-09-07 from docs.asterdex.com's own withdrawal doc (same
+underlying asterdex/api-docs source, current version) while chasing a live
+withdraw signature failure with keys already confirmed correct. Everything
+above was re-checked field-by-field against it and held up EXCEPT one thing
+the doc states only under the Solana Ed25519 example but which applies
+equally here: "Important: Strip trailing zeros from Amount and Fee (e.g.,
+1.20 -> 1.2)" — the backend recomputes its own canonical amount/fee string
+when it re-verifies a signature, so a client that signs a zero-padded string
+(this file's `f"{x:.6f}"`, e.g. "10.500000") produces a digest the backend
+never reproduces. See `_trimmed_decimal`.
 """
 
 from __future__ import annotations
@@ -122,21 +133,39 @@ class AsterConnector(DexConnector):
         self._session = requests.Session()
 
     def _v3_auth_query(self, extra: dict) -> str:
-        """V3 Pro API-Key request auth — see aster_signing.py for the actual
-        scheme (keccak/ABI-encode/personal_sign) and why it replaced an
-        earlier, non-working EIP-712 attempt here."""
+        """V3 Pro API-Key request auth — see aster_signing.py."""
         return v3_signed_query(self._user, self._signer, self._signer_key, extra)
 
+    @staticmethod
+    def _trimmed_decimal(value: float, decimals: int = 6) -> str:
+        # docs.asterdex.com's withdrawal doc (fetched 2026-09-07), under the
+        # Solana Ed25519 message format, states in bold: "Important: Strip
+        # trailing zeros from Amount and Fee (e.g., 1.20 -> 1.2)" — and gives
+        # a worked example (Amount=1.2, not 1.20). That instruction exists
+        # because the backend recomputes its OWN canonical amount/fee string
+        # from the submitted numeric value when it re-verifies a signature;
+        # a client that signs a differently-formatted string (zero-padded)
+        # produces a digest the backend never reproduces, which is
+        # indistinguishable from every other cause of Aster's generic -1000
+        # "Signature check failed". Nothing in the EVM section repeats the
+        # warning, but the Action struct's `amount`/`fee` are the same
+        # backend-recomputed "string" fields under the hood, so the fix
+        # applies here too — `f"{x:.6f}"` (the previous formatting, e.g.
+        # "10.500000") is exactly the padded shape the doc warns against.
+        text = f"{value:.{decimals}f}".rstrip("0").rstrip(".")
+        return text or "0"
+
     def _withdraw_action_signature(self, chain: Chain, coin: str, amount_usd: float, fee_usd: float, to_address: str) -> tuple[dict, str]:
-        # Raw doc self-contradicts: the general "EVM Withdraw Signature"
-        # section says "timestamp in milliseconds multiplied by 1000", but
-        # the actual endpoint's OWN param table ("withdraw by fapi[v3] [evm]
-        # [futures]", the one this connector calls) describes `userNonce`
-        # explicitly as a "Nanosecond timestamp" — re-checked 2026-09-06.
-        # Endpoint-specific wins: this is a real nanosecond timestamp, not
-        # ms*1000 (a 2026-09-06 edit briefly "fixed" this to ms*1000, which
-        # was itself the regression — reverted).
-        nonce = int(time.time() * 1e9)
+        # ms * 1000, NOT a true nanosecond timestamp. The doc calls this a
+        # "Nanosecond timestamp" in the param table and "milliseconds
+        # multiplied by 1000" in the struct description; its own Solana
+        # sample settles which it means: `Date.now() * 1000; // nanosecond
+        # timestamp`, example value 1773741793787000 (16 digits). A real
+        # ns value (19 digits) is 1000x outside the backend's window and is
+        # rejected live with -1000 "Your signature has expired" (2026-09-07).
+        # An earlier ms*1000 attempt was judged a regression while the outer
+        # V3 auth was still broken, so that test was inconclusive.
+        nonce = int(time.time() * 1000) * 1000
         # Field names have LITERAL spaces ("destination Chain", "aster
         # chain") — confirmed 2026-09-05 against the raw doc
         # (raw.githubusercontent.com/asterdex/api-docs/master/demo/
@@ -151,8 +180,8 @@ class AsterConnector(DexConnector):
             "destination": Web3.to_checksum_address(to_address),
             "destination Chain": _CHAIN_NAME.get(chain, chain.name),
             "token": coin,
-            "amount": f"{amount_usd:.6f}",
-            "fee": f"{fee_usd:.6f}",
+            "amount": self._trimmed_decimal(amount_usd),
+            "fee": self._trimmed_decimal(fee_usd),
             "nonce": nonce,
             "aster chain": "Mainnet",
         }
@@ -206,14 +235,16 @@ class AsterConnector(DexConnector):
         response.raise_for_status()
         data = response.json()
         payload = data.get("data", data)
-        # `gasUsdValue` is what the live endpoint actually returns (checked
-        # 2026-09-05: {'gasPrice': None, 'gasLimit': 200000, 'nativePrice':
-        # None, 'tokenPrice': 1.00001, 'gasCost': 0.1, 'gasUsdValue': 0.1}) —
-        # explicitly USD-denominated, unlike `gasCost` which is ambiguous
-        # about units. The other three names are kept as a fallback in case
-        # a different chain/coin combination ever shapes the response
-        # differently.
-        for key in ("gasUsdValue", "fee", "withdrawFee", "estimatedFee"):
+        # `gasCost` is the documented field ("Estimated withdrawal fee in
+        # token units") and is what the withdraw Action's `fee` must carry.
+        # An earlier version preferred `gasUsdValue` because the two happened
+        # to be equal that day; live 2026-09-07 they were not (gasCost 0.11,
+        # gasUsdValue 0.10, and the signed user-withdraw-info endpoint's
+        # withdrawFee agreed with gasCost) — signing the USD figure would
+        # bake a fee the backend does not expect into the signature. The
+        # value is also reported as `quotedFeeUsd`, which is exact only for
+        # a $1-pegged stable; that is all this connector supports.
+        for key in ("gasCost", "gasUsdValue", "fee", "withdrawFee", "estimatedFee"):
             if key in payload and payload[key] is not None:
                 return float(payload[key])
         raise RuntimeError(f"Aster: could not find a fee field in estimate-withdraw-fee response: {payload!r}")
@@ -235,16 +266,11 @@ class AsterConnector(DexConnector):
                 "userSignature": signature,
             }
         )
-        # Signed params go in the URL QUERY STRING, not the body — like every
-        # other signed Aster call in this file (poll_balance_usd below) and
-        # in the proven-working reference implementations (sentinelBackend's
-        # AsterHttp._listen_key_request POSTs the same way: signed query in
-        # the URL, empty body). Aster's v3 auth is a Binance-Futures clone,
-        # and Binance-style "SIGNED" endpoints check the query string
-        # regardless of HTTP method — a first attempt at this sent `query`
-        # as the POST body instead, which fails closed with -1000
-        # "Signature check failed" because the server never finds a
-        # user/signer/signature to check in the body it's actually reading.
+        # Signed params go in the URL QUERY STRING with an empty body — the
+        # V3 doc's own `send_by_url` sample POSTs exactly this way (see
+        # aster_signing.py for the source). Its `send_by_body` alternative
+        # would need the signature inside the form data instead; mixing the
+        # two (signing the query, sending a body) fails closed with -1000.
         response = self._session.post(
             f"{_FUTURES_BASE_URL}/fapi/v3/aster/user-withdraw?{query}",
             headers={"Content-Type": "application/x-www-form-urlencoded"},

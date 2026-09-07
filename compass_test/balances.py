@@ -71,8 +71,7 @@ def _aster() -> dict[str, float]:
     """GET /fapi/v3/account (signed) — `marginBalance` of the USDT and USDC
     asset rows specifically (an account can hold both as separate collateral
     assets; earlier code summed EVERY nonzero asset row, which folded in any
-    other collateral the account holds too). Signing: see aster_signing.py —
-    NOT what Aster's public docs describe."""
+    other collateral the account holds too). Signing: see aster_signing.py."""
     from .aster_signing import v3_signed_query
 
     account = config.require_env("ASTER_USER")

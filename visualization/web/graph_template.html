@@ -100,7 +100,6 @@
   .node .sublabel.neg { fill: var(--neg); }
   .node .sublabel.zero { fill: var(--muted); }
   .node .node-monogram { font-size: 13px; font-weight: 700; letter-spacing: .02em; }
-  .node.search-match circle { stroke: #ffb703; stroke-width: 3; }
   .node.selected circle { stroke: var(--accent); stroke-width: 3; }
   .node.dimmed circle, .node.dimmed text { opacity: .15; }
 
@@ -198,30 +197,9 @@
   .wallet-total { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); font-weight: 700; }
   #walletPanel .wallet-error { color: var(--neg); font-size: 11px; margin-top: 6px; }
 
-  /* Bar au-dessus du graphe : formule de coût du solveur + curseur k, voir
-     computeTimeWeightedCost (src/graph/costing.py) et graph.urgency.
-     TimeWeightParams. Changer k re-solve côté serveur (POST /api/solve, voir
-     visualization/server.py) et met à jour les arêtes choisies en place. */
-  #costBar {
-    padding: 8px 16px; border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-    background: var(--panel-bg); font-size: 12px;
-  }
-  #costBar.hidden { display: none; }
-  .formula {
-    font-family: "Cambria Math", "STIX Two Math", Cambria, "Times New Roman", serif;
-    font-style: italic; font-size: 12.5px; background: var(--bg); border: 1px solid var(--border);
-    border-radius: 5px; padding: 6px 9px; white-space: nowrap;
-  }
-  .costBar-params { color: var(--muted); white-space: nowrap; }
-  .costBar-params b, .costBar-params span { color: var(--text); }
-  .costBar-k { display: flex; align-items: center; gap: 8px; margin-left: auto; white-space: nowrap; }
-  .costBar-k label { font-weight: 600; }
-  .costBar-k input[type="range"] { width: 130px; }
-  .costBar-k .k-note { color: var(--muted); font-size: 11px; }
-  .k-status { font-size: 11px; font-style: italic; color: var(--muted); }
-  .k-status.offline { color: var(--neg); }
-  .k-status.saving { color: var(--accent); }
+  .status-note { font-size: 11px; font-style: italic; color: var(--muted); }
+  .status-note.offline { color: var(--neg); }
+  .status-note.saving { color: var(--accent); }
   .costBar-btn {
     border: 1px solid var(--border); background: var(--bg); color: var(--text);
     border-radius: 5px; padding: 5px 10px; cursor: pointer; font-size: 12px; white-space: nowrap;
@@ -447,29 +425,15 @@
 
 <div id="exploreView">
   <div id="toolbar">
-    <input type="text" id="search" placeholder="Search a DEX… (Enter to focus)" />
     <label><input type="checkbox" id="showCosts" /> Show cost labels</label>
+    <button id="recomputeBtn" class="costBar-btn" title="Rebuild the graph from scratch — new demo imbalances, same as running `python src/main.py`">↻ Recompute routes</button>
+    <span id="recomputeStatus" class="status-note"></span>
     <div style="display:flex; align-items:center; gap:6px; margin-left:auto;">
       <button class="zoom-btn" id="zoomOut">−</button>
       <span id="zoomLabel">100%</span>
       <button class="zoom-btn" id="zoomIn">+</button>
       <button class="zoom-btn" id="zoomFit" title="Fit to screen">⤢</button>
     </div>
-  </div>
-
-  <div id="costBar">
-    <div class="formula">w(e, d) = Fee(e) + λ(σ<sub>d</sub>) · Time(e)</div>
-    <div class="formula">λ(σ<sub>d</sub>) = λ<sub>min</sub> + (λ<sub>max</sub> − λ<sub>min</sub>) · (1 − e<sup>−k / σ<sub>d</sub></sup>)</div>
-    <div class="costBar-params">λ<sub>min</sub> = <span id="lambdaMinVal">–</span> &nbsp; λ<sub>max</sub> = <span id="lambdaMaxVal">–</span></div>
-    <div class="costBar-k">
-      <label for="kSlider">k</label>
-      <input type="range" id="kSlider" min="0.1" max="10" step="0.1" value="2">
-      <b id="kValue">2.00</b>
-      <span class="k-note">Higher k → solver favors faster routes</span>
-      <span id="kStatus" class="k-status"></span>
-    </div>
-    <button id="recomputeBtn" class="costBar-btn" title="Rebuild the graph from scratch — new demo imbalances, same as running `python src/main.py`">↻ Recompute routes</button>
-    <span id="recomputeStatus" class="k-status"></span>
   </div>
 
   <div id="main">
@@ -680,10 +644,7 @@ const walletHubByChain = new Map(walletHubs.map(w => [w.chain, w]));
 // (e.hops, déjà calculés une fois pour toutes — voir web_view.py
 // _buildHopList/_testableHopInfo pour `.testable`), PAS des hops du trajet
 // réellement choisi par le solveur : ça permet de construire tous les
-// segments UNE SEULE FOIS au chargement de la page, et de ne plus jamais
-// avoir à les régénérer sur un re-solve (POST /api/solve) — refreshFromSolveResult
-// se contente déjà de basculer visibilité/classes sur des éléments
-// préexistants, jamais de reconstruire le DOM (voir plus bas). Dans de
+// segments UNE SEULE FOIS au chargement de la page. Dans de
 // rares cas, la route affichée peut donc différer légèrement du choix
 // conjoint réel du solveur — même famille d'approximation que
 // Journey.plausible ailleurs dans ce code. Repli sur [dexFrom, dexTo]
@@ -912,6 +873,14 @@ async function runLiveHop(resultEl, box, data, ctx) {
 
   box.remove();
   renderHopTestResult(resultEl, liveData, ctx);
+
+  // A live hop just moved real funds — the cached wallet balance is now
+  // stale, unlike every other UI action (this is the only place that
+  // actually triggers an on-chain operation). Refresh the cache and
+  // whichever wallet views are currently on screen.
+  await getWalletBalances(true);
+  fetchWalletBalances();
+  if (selectedWalletChain) renderWalletDetails(selectedWalletChain);
 }
 // Deux estimations Dijkstra indépendantes (voir web_view.py:_computeDexPaths)
 // coïncident souvent (même route la moins chère et la plus rapide) : plutôt
@@ -957,8 +926,7 @@ function journeyStable(journeys) {
 }
 
 // Applique/retire les classes stable-usdc/stable-usdt sur une edge "chosen"
-// (voir .edge.chosen.stable-* dans :root) : une seule fonction pour rester
-// synchronisée entre la création initiale et refreshFromSolveResult (k re-solvé).
+// (voir .edge.chosen.stable-* dans :root).
 function setEdgeStableClass(path, stable) {
   path.classList.toggle("stable-usdc", stable === "USDC");
   path.classList.toggle("stable-usdt", stable === "USDT");
@@ -1037,23 +1005,19 @@ for (const e of pathEdges) {
   // the relevant Wallet hub(s) (see journeyWaypoints) — 2 waypoints = the
   // old direct chord (fallback), 3 = one hub (same-chain rebalancing), 4 =
   // two hubs (a bridge crosses chains). `state`/`e` are shared across every
-  // segment of this pathEdge, so refreshFromSolveResult/selectEdge (which
-  // iterate `edgeElements` keyed on `el.e.from`/`el.e.to`) toggle all of a
-  // route's segments together for free — verified, no changes needed there.
+  // segment of this pathEdge, so selectEdge (which iterates `edgeElements`
+  // keyed on `el.e.from`/`el.e.to`) toggles all of a route's segments
+  // together for free — verified, no changes needed there.
   const waypoints = journeyWaypoints(e);
   const weight = 1 - e.cost / maxCost;
 
-  // `state.journeys` (pas une const capturée) : mutable en place par
-  // refreshFromSolveResult quand un nouveau k re-solve le graphe côté
-  // serveur, sans avoir à redessiner ni rebrancher les listeners de l'edge.
   const state = { journeys: journeysByPair.get(`${e.from}→${e.to}`) || null };
   state.dotsStable = journeyStable(state.journeys);
 
   // Un seul label de coût pour toute la route (posé sur le premier segment),
   // pas un par segment — répéter le même montant à chaque coude serait
   // redondant. Partagé (même élément) entre toutes les entrées edgeElements
-  // de cette pathEdge : refreshFromSolveResult y applique le même toggle
-  // plusieurs fois de suite, idempotent.
+  // de cette pathEdge.
   const label = document.createElementNS(SVG_NS, "text");
   label.setAttribute("class", "edge-label hidden");
   label.setAttribute("text-anchor", "middle");
@@ -1094,16 +1058,11 @@ for (const e of pathEdges) {
 
     edgesLayer.appendChild(path);
 
-    // Toujours créées (même arête pas encore choisie) : un k re-solvé côté
-    // serveur peut faire basculer n'importe quelle arête en "chosen" sans
-    // recharger la page, voir refreshFromSolveResult. `state.dotsStable` :
-    // stable avec laquelle CE groupe de badges a été construit — un badge
-    // porte la couleur/lettre en dur à la création (voir createFlowDots), donc
-    // un changement de stable après un re-solve exige de recréer le groupe,
-    // pas juste de basculer .hidden (voir refreshFromSolveResult). Chaque
-    // segment anime ses propres badges (relais, pas une seule animation
-    // continue à travers tous les segments — SVG animateMotion/mpath ne
-    // suit qu'un seul <path>).
+    // `state.dotsStable` : stable avec laquelle CE groupe de badges a été
+    // construit — un badge porte la couleur/lettre en dur à la création
+    // (voir createFlowDots). Chaque segment anime ses propres badges (relais,
+    // pas une seule animation continue à travers tous les segments — SVG
+    // animateMotion/mpath ne suit qu'un seul <path>).
     const pathLength = Math.hypot(ex - sx, ey - sy);
     const speedFactor = Math.max(0.6, pathLength / 260);
     const dots = createFlowDots(pathId, speedFactor, state.dotsStable);
@@ -1270,10 +1229,12 @@ function hideTooltip() { tooltip.style.display = "none"; }
 
 let selectedName = null;
 let selectedEdgeKey = null;
+let selectedWalletChain = null;
 
 function clearSelection() {
   selectedName = null;
   selectedEdgeKey = null;
+  selectedWalletChain = null;
   document.querySelectorAll(".node.selected").forEach(e => e.classList.remove("selected"));
   document.querySelectorAll(".dimmed").forEach(e => e.classList.remove("dimmed"));
   document.querySelectorAll(".edge.highlight").forEach(e => e.classList.remove("highlight"));
@@ -1399,11 +1360,15 @@ function selectDex(name) {
 // the sidebar "Wallet (on-chain, live)" panel, see fetchWalletBalances).
 function selectWallet(chain) {
   clearSelection();
+  selectedWalletChain = chain;
   const g = walletHubElements.get(chain);
   if (g) g.classList.add("selected");
   renderWalletDetails(chain);
 }
 
+// Wallet balances cache (see getWalletBalances) — this panel and the
+// sidebar "Wallet (on-chain, live)" panel (fetchWalletBalances) both read
+// from it instead of each hitting GET /api/wallet-balances on their own.
 async function renderWalletDetails(chain) {
   document.getElementById("details").innerHTML = `
     <h2>Details</h2>
@@ -1411,9 +1376,7 @@ async function renderWalletDetails(chain) {
 
   let rows;
   try {
-    const res = await fetch("/api/wallet-balances");
-    if (!res.ok) throw new Error("bad response");
-    rows = (await res.json()).filter(r => r.chain === chain);
+    rows = (await getWalletBalances()).filter(r => r.chain === chain);
   } catch (err) {
     document.getElementById("details").innerHTML = `
       <h2>Details</h2>
@@ -1497,151 +1460,28 @@ function renderEdgeDetails(e, journeys) {
   bindTestEdgeButtons();
 }
 
-// Paramètres λ(σ_d) réellement utilisés par le solveur (voir graph.urgency.
-// TimeWeightParams, câblés dans main.py) — GRAPH_DATA.timeWeight est absent
-// si le graphe a été construit sans time-weighting.
-const kSlider = document.getElementById("kSlider");
-const kValueEl = document.getElementById("kValue");
-const kStatusEl = document.getElementById("kStatus");
-let kSolveInFlight = false;
-let kSolvePending = null;
-
-function renderCostBarParams() {
-  const tw = GRAPH_DATA.timeWeight;
-  document.getElementById("costBar").classList.toggle("hidden", !tw);
-  if (!tw) return;
-  document.getElementById("lambdaMinVal").textContent = fmt(tw.lambdaMin);
-  document.getElementById("lambdaMaxVal").textContent = fmt(tw.lambdaMax);
-  kSlider.value = tw.k;
-  kValueEl.textContent = fmt(tw.k);
-}
-renderCostBarParams();
-
-// Recalcule ce que dépend du plan choisi par le solveur (Fee/Time par arête
-// ne dépendent PAS de k, voir costing.py — seule l'arête choisie en dépend)
-// après un POST /api/solve réussi, en place, sans recharger la page ni
-// retoucher aux nodes/paths Dijkstra (inchangés).
-function refreshFromSolveResult(data) {
-  GRAPH_DATA.operations = data.operations;
-  GRAPH_DATA.journeys = data.journeys;
-  GRAPH_DATA.timeWeight = data.timeWeight;
-
-  journeysByPair.clear();
-  for (const j of GRAPH_DATA.journeys) {
-    const key = `${j.from}→${j.to}`;
-    if (!journeysByPair.has(key)) journeysByPair.set(key, []);
-    journeysByPair.get(key).push(j);
-  }
-
-  for (const el of edgeElements) {
-    const key = `${el.e.from}→${el.e.to}`;
-    const journeys = journeysByPair.get(key) || null;
-    el.state.journeys = journeys;
-    el.path.classList.toggle("chosen", !!journeys);
-    el.path.classList.toggle("approximate", !!journeys && journeys.some(j => j.plausible));
-    el.path.classList.toggle("hidden", !journeys);
-    setEdgeStableClass(el.path, journeyStable(journeys));
-    el.hitPath.classList.toggle("hidden", !journeys);
-    el.label.classList.toggle("hidden", !journeys || !showCosts.checked);
-
-    const stable = journeyStable(journeys);
-    if (stable !== el.state.dotsStable) {
-      // La stable transportée a changé (edge nouvellement choisie, ou dont
-      // le trajet dominant a changé) : les badges portent leur couleur/lettre
-      // en dur à la création (voir createFlowDots), un simple toggle de
-      // classe ne suffit pas ici, il faut les reconstruire.
-      const fresh = createFlowDots(el.pathId, el.speedFactor, stable);
-      fresh.classList.toggle("hidden", !journeys);
-      el.dots.replaceWith(fresh);
-      el.dots = fresh;
-      el.state.dotsStable = stable;
-    } else {
-      el.dots.classList.toggle("hidden", !journeys);
-    }
-  }
-
-  opsSummaryData = operationsSummary();
-  renderStats();
-  renderOperations();
-  renderCostBarParams();
-
-  if (selectedEdgeKey) {
-    const el = edgeElements.find(x => `${x.e.from}→${x.e.to}` === selectedEdgeKey);
-    if (el) selectEdge(el.e, el.state.journeys);
-  }
-}
-
-async function requestSolve(k) {
-  if (kSolveInFlight) { kSolvePending = k; return; }
-  kSolveInFlight = true;
-  kStatusEl.textContent = "Solving…";
-  kStatusEl.className = "k-status saving";
-  try {
-    const res = await fetch("/api/solve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ k }),
-    });
-    if (!res.ok) throw new Error("solve failed");
-    refreshFromSolveResult(await res.json());
-    kStatusEl.textContent = "";
-  } catch (e) {
-    kStatusEl.textContent = "Not connected to the solve server — dragging k won't recompute routes. Serve this page with `python -m visualization.server`.";
-    kStatusEl.className = "k-status offline";
-  } finally {
-    kSolveInFlight = false;
-    if (kSolvePending !== null) {
-      const next = kSolvePending;
-      kSolvePending = null;
-      requestSolve(next);
-    }
-  }
-}
-
-let kDebounceTimer = null;
-kSlider.addEventListener("input", () => {
-  kValueEl.textContent = fmt(parseFloat(kSlider.value));
-  clearTimeout(kDebounceTimer);
-  kDebounceTimer = setTimeout(() => requestSolve(parseFloat(kSlider.value)), 250);
-});
-
 // Reconstruit tout le graphe from scratch côté serveur (nouveaux
-// déséquilibres aléatoires de démo, k remis à sa valeur par défaut — voir
-// main.buildAndSolveGraph et POST /api/recompute) : contrairement au curseur
-// k, ça change dexNodes/paths (les balances changent), donc un patch DOM en
-// place ne suffit pas — on recharge la page servie fraîchement re-rendue.
+// déséquilibres aléatoires de démo — voir main.buildAndSolveGraph et POST
+// /api/recompute) : les balances changent, donc un patch DOM en place ne
+// suffit pas — on recharge la page servie fraîchement re-rendue.
 const recomputeBtn = document.getElementById("recomputeBtn");
 const recomputeStatusEl = document.getElementById("recomputeStatus");
 recomputeBtn.addEventListener("click", async () => {
   recomputeBtn.disabled = true;
   recomputeStatusEl.textContent = "Recomputing… (rebuilding demo imbalances, a few seconds)";
-  recomputeStatusEl.className = "k-status saving";
+  recomputeStatusEl.className = "status-note saving";
   try {
     const res = await fetch("/api/recompute", { method: "POST" });
     if (!res.ok) throw new Error("recompute failed");
     window.location.reload();
   } catch (e) {
     recomputeStatusEl.textContent = "Not connected to the solve server — can't recompute. Serve this page with `python -m visualization.server`.";
-    recomputeStatusEl.className = "k-status offline";
+    recomputeStatusEl.className = "status-note offline";
     recomputeBtn.disabled = false;
   }
 });
 
 svg.addEventListener("click", clearSelection);
-
-const searchInput = document.getElementById("search");
-searchInput.addEventListener("input", () => {
-  const query = searchInput.value.trim().toLowerCase();
-  for (const [name, el] of nodeElements) {
-    el.classList.toggle("search-match", query.length > 0 && name.toLowerCase().includes(query));
-  }
-});
-searchInput.addEventListener("keydown", (ev) => {
-  if (ev.key !== "Enter") return;
-  const query = searchInput.value.trim().toLowerCase();
-  const match = GRAPH_DATA.dexNodes.find(d => d.name.toLowerCase().includes(query));
-  if (match) { selectDex(match.name); focusOn(match.cx, match.cy); }
-});
 
 const showCosts = document.getElementById("showCosts");
 showCosts.addEventListener("change", () => {
@@ -1743,17 +1583,38 @@ renderStats();
 
 // Panel "Wallet" : solde ON-CHAIN RÉEL de l'operating wallet, jamais un mock
 // — voir compass_test/balances.py::list_wallet_balances / GET
-// /api/wallet-balances (server.py). Chargé une fois au démarrage de la
-// page ; USDC/USDT sur Arbitrum/BSC uniquement pour l'instant.
+// /api/wallet-balances (server.py). USDC/USDT sur Arbitrum/BSC uniquement
+// pour l'instant.
 const WALLET_CHAIN_DOT = { ARBITRUM: "#28a0f0", BSC: "#f0b90b" };
+
+// Cached in memory: this balance only actually moves when a live hop
+// executes (see runLiveHop, the only place that forces a refresh) — every
+// other read (page load, re-opening a wallet's Details panel) reuses the
+// same cached rows instead of re-hitting GET /api/wallet-balances.
+// walletBalancesInFlight dedupes concurrent callers into a single request.
+let walletBalancesCache = null;
+let walletBalancesInFlight = null;
+
+async function getWalletBalances(forceRefresh = false) {
+  if (forceRefresh) walletBalancesCache = null;
+  if (walletBalancesCache) return walletBalancesCache;
+  if (!walletBalancesInFlight) {
+    walletBalancesInFlight = fetch("/api/wallet-balances")
+      .then(res => {
+        if (!res.ok) throw new Error("bad response");
+        return res.json();
+      })
+      .then(rows => { walletBalancesCache = rows; return rows; })
+      .finally(() => { walletBalancesInFlight = null; });
+  }
+  return walletBalancesInFlight;
+}
 
 async function fetchWalletBalances() {
   const el = document.getElementById("walletBalances");
   let rows;
   try {
-    const res = await fetch("/api/wallet-balances");
-    if (!res.ok) throw new Error("bad response");
-    rows = await res.json();
+    rows = await getWalletBalances();
   } catch (e) {
     el.innerHTML = `<p class="wallet-error">Not connected to the wallet balance server. Serve this page with \`python -m visualization.server\`.</p>`;
     return;
