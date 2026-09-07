@@ -2,8 +2,28 @@ from graph.structures.DEXes import Chain, Stable
 
 from .exceptions import UnsupportedChainError
 
-# 6 décimales pour USDC et USDT sur toutes les chains listées ici.
+# 6 décimales pour USDC et USDT sur (quasi) toutes les chains listées ici —
+# SAUF BSC, où le USDT/USDC "Binance-Peg" (mêmes contrats que
+# STABLE_TOKEN_ADDRESSES ci-dessous) utilise 18 décimales on-chain, vérifié
+# en direct via un appel decimals() le 2026-09-04 (voir
+# compass_test/chain_ops.py, qui a découvert l'écart : un solde BSC/USDT lu
+# en supposant 6 décimales affichait ~$2 000 000 000 000 au lieu de ~$2).
+# Une seule constante globale aurait rendu FAUX, d'un facteur 10^12, tout
+# calcul $ <-> unités on-chain sur BSC : montant de dépôt/retrait
+# (compass_test), et côté solveur toute quote de swap USDC<->USDT sur BSC
+# (voir graph.costing.computeSwapCostBreakpoints/computeRealizedSwapSlippageUsd,
+# seul autre appelant). get_stable_decimals() est LA source de vérité à
+# utiliser partout — STABLE_DECIMALS reste le défaut qu'elle applique aux
+# chains non listées dans les overrides, jamais à lire directement pour BSC.
 STABLE_DECIMALS = 6
+_STABLE_DECIMALS_OVERRIDES: dict[tuple[Chain, Stable], int] = {
+    (Chain.BSC, Stable.USDT): 18,
+    (Chain.BSC, Stable.USDC): 18,
+}
+
+
+def get_stable_decimals(chain: Chain, stable: Stable) -> int:
+    return _STABLE_DECIMALS_OVERRIDES.get((chain, stable), STABLE_DECIMALS)
 
 # Adresses vérifiées (CoinGecko contract data) ; None = pas encore vérifié,
 # ne pas deviner une adresse de contrat, ça manipule de l'argent réel.

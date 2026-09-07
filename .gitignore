@@ -1,6 +1,11 @@
 .venv/
 .venv-1/
+.venv39/
 __pycache__/
 *.pyc
 .DS_Store
 .env
+
+# Real test-run reports (wallet addresses, amounts, tx hashes) — local
+# evidence for the "Test Results" tab, not meant to be committed.
+compass_test/reports/*.json

@@ -34,7 +34,7 @@ class _ZeroGasFeeService(GasFeeService):
         return 0.0
 
 
-# Graine par défaut de _generateRandomImbalances : mêmes déséquilibres de
+# Graine par défaut de _generateMockImbalances : mêmes déséquilibres de
 # démo à chaque `python src/main.py`, plutôt qu'un nouveau tirage aléatoire
 # à chaque run -- sinon deux runs ne sont jamais comparables après un
 # changement de code (coûts/routes différents rien qu'à cause du bruit
@@ -43,17 +43,56 @@ class _ZeroGasFeeService(GasFeeService):
 DEMO_IMBALANCE_SEED = 42
 
 
-def _generateRandomImbalances(dexList: list[DEX], seed: int | None = DEMO_IMBALANCE_SEED) -> None:
-    """Assigne des surplus/déficits aléatoires à des fins de démo (le solveur
-    exige une conservation de flot exacte : somme des surplus == somme des
-    déficits, sinon le modèle CP-SAT est INFEASIBLE) — à retirer une fois
-    connectors/zfund.py branché sur les vraies données de balance/target.
+# Repli quand aucun connecteur de solde réel n'est disponible pour un DEX
+# donné (voir _fetchRealOrMockBalanceUsd) — plage volontairement petite et
+# réaliste (comparable aux soldes réels observés en session sur MEXC/Aster,
+# de l'ordre de quelques $ à quelques dizaines de $), plus la même que les
+# $500-$3000 précédemment tirés au hasard sans aucun ancrage réel.
+_MOCK_BALANCE_RANGE_USD = (5.0, 150.0)
+
+
+def _fetchRealOrMockBalanceUsd(dex: DEX, rng: random.Random) -> tuple[float, bool]:
+    """Retourne (balanceUsd, isReal). Tente une lecture EN DIRECT du solde via
+    compass_test/balances.py — un lecteur de solde par DEX, un appel direct à
+    l'API de CE DEX précis avec les identifiants de piggybank-arb/.env (voir
+    ce module pour le détail : Aster/Aden/Ondo Perps viennent de
+    sentinelBackend, les autres de la doc publique de chaque DEX). Aujourd'hui
+    les 8 DEX du registre ont un lecteur qui fonctionne. Repli sur
+    _MOCK_BALANCE_RANGE_USD si ce DEX n'a pas encore de lecteur, si les
+    identifiants sont absents, ou sur toute erreur réseau — ne bloque jamais
+    la construction du graphe sur la disponibilité d'une API externe. Import
+    local (pas en tête de module) : src/ ne doit pas dépendre de
+    compass_test/ au chargement, seulement au moment de cet appel best-
+    effort."""
+    try:
+        from compass_test.balances import get_real_balance_usd
+
+        result = get_real_balance_usd(dex.name)
+        if result.balanceUsd is not None and result.balanceUsd > 0:
+            return result.balanceUsd, True
+    except Exception:
+        pass
+    return rng.uniform(*_MOCK_BALANCE_RANGE_USD), False
+
+
+def _generateMockImbalances(dexList: list[DEX], seed: int | None = DEMO_IMBALANCE_SEED) -> None:
+    """Assigne des surplus/déficits de démo (le solveur exige une conservation
+    de flot exacte : somme des surplus == somme des déficits, sinon le modèle
+    CP-SAT est INFEASIBLE) — désormais ANCRÉS sur de vrais soldes DEX quand un
+    connecteur est disponible (voir _fetchRealOrMockBalanceUsd), plutôt que
+    purement aléatoires : un surplus DEX ne peut plus jamais "offrir" plus que
+    ce qu'il détient réellement. Encore un mock au sens où (a) le déficit
+    reste sans ancrage réel (pas de vraie donnée de TARGET, voir
+    connectors/zfund.py, volontairement pas branché ici) et (b) le montant
+    withdrawable retenu n'est qu'une fraction aléatoire du solde, pas le
+    solde entier (une vraie desk ne viderait jamais un compte).
     Un DEX sans stable configurée serait exclu (injoignable dans le graphe :
     aucun DepositNode/WithdrawNode créé pour lui, voir dex_registry.py) —
     tous les DEX du registre en ont au moins une aujourd'hui.
 
-    seed=DEMO_IMBALANCE_SEED (défaut) : déséquilibres reproductibles.
-    seed=None : tirage aléatoire frais (voir --random dans main())."""
+    seed=DEMO_IMBALANCE_SEED (défaut) : tirage MOCK reproductible (la partie
+    solde réel, elle, varie forcément avec le vrai compte).
+    seed=None : tirage mock frais (voir --random dans main())."""
     rng = random.Random(seed)
     eligible = [dex for dex in dexList if dex.stables]
     rng.shuffle(eligible)
@@ -63,51 +102,66 @@ def _generateRandomImbalances(dexList: list[DEX], seed: int | None = DEMO_IMBALA
     # Cents entiers plutôt que dollars flottants : garantit une somme exacte
     # (le solveur convertit en int via solver.SCALE, une somme approximative
     # suffit à rendre le modèle infeasible).
-    deficitsCents = [rng.randint(50_000, 300_000) for _ in deficitDexes]  # $500-$3000
-    totalCents = sum(deficitsCents)
+    isRealBalance: dict[DEX, bool] = {}
+    surplusCents: dict[DEX, int] = {}
+    for dex in surplusDexes:
+        balanceUsd, isReal = _fetchRealOrMockBalanceUsd(dex, rng)
+        isRealBalance[dex] = isReal
+        # Retient une fraction aléatoire (30%-90%) du solde, jamais sa
+        # totalité : garde une marge de fonctionnement, comme le ferait un
+        # vrai rebalancing.
+        surplusCents[dex] = round(balanceUsd * rng.uniform(0.3, 0.9) * 100)
+    totalCents = sum(surplusCents.values())
 
-    weights = [rng.random() for _ in surplusDexes]
+    # Déficits : split proportionnel du total des surplus (garantit la
+    # conservation EXACTE par construction, plutôt que de tirer des déficits
+    # indépendamment et espérer que les surplus suffisent) — toujours mock,
+    # faute d'une vraie donnée de TARGET par DEX (voir connectors/zfund.py).
+    weights = [rng.random() for _ in deficitDexes]
     weightSum = sum(weights)
-    surplusCents = [round(totalCents * w / weightSum) for w in weights[:-1]]
-    surplusCents.append(totalCents - sum(surplusCents))  # le dernier absorbe l'arrondi
+    deficitsCents = [round(totalCents * w / weightSum) for w in weights[:-1]]
+    deficitsCents.append(totalCents - sum(deficitsCents))  # le dernier absorbe l'arrondi
 
     for dex, cents in zip(deficitDexes, deficitsCents):
         dex.inbalance = -cents / 100
 
-    for dex, cents in zip(surplusDexes, surplusCents):
+    for dex, cents in surplusCents.items():
         stable = rng.choice(dex.stables)
         dex.withdrawBalances = {stable: cents / 100}
         # dex.requiresSameChainWithdraw (ex: Aster) : ce surplus n'est
         # évacuable QUE vers la chain où il a été crédité (voir
         # Graph._linkWithdrawalsAndDeposits) — faute de vraie donnée de
-        # balance par chain (voir connectors/zfund.py, pas encore branché),
-        # on tire cette chain au hasard parmi celles du DEX, comme le reste
-        # de cette fonction de démo.
+        # balance PAR CHAIN (le connecteur ne renvoie qu'un total DEX, pas de
+        # répartition par chain), on tire cette chain au hasard parmi celles
+        # du DEX, seule partie encore purement mock de ce côté.
         if dex.requiresSameChainWithdraw:
             dex.withdrawChainByStable = {stable: rng.choice(dex.chains)}
 
-    print("Déséquilibres aléatoires générés :")
+    print("Déséquilibres générés (mock, surplus ancré sur le solde réel quand disponible) :")
     for dex in deficitDexes:
-        print(f"  - {dex.name}: déficit ${-dex.inbalance:.2f}")
+        print(f"  - {dex.name}: déficit ${-dex.inbalance:.2f} (mock)")
     for dex in surplusDexes:
         stable, amount = next(iter(dex.withdrawBalances.items()))
         chain = dex.withdrawChainByStable.get(stable)
         chainNote = f", withdrawable only on {chain.name}" if chain is not None else ""
-        print(f"  - {dex.name}: surplus ${amount:.2f} ({stable.name}{chainNote})")
+        sourceNote = "real balance" if isRealBalance[dex] else "mock balance"
+        print(f"  - {dex.name}: surplus ${amount:.2f} ({stable.name}{chainNote}) [{sourceNote}]")
 
 
 def buildAndSolveGraph(seed: int | None = DEMO_IMBALANCE_SEED) -> tuple[Graph, dict[str, DEX], TimeWeightParams]:
-    """Construit un graphe de démo (déséquilibres aléatoires, voir
-    _generateRandomImbalances) et le résout une première fois. Factorisé hors
-    de main() pour être réutilisé par visualization/server.py, qui garde le
-    Graph résultant en mémoire pour re-solver à la volée sur un nouveau k
-    (voir POST /api/solve) sans reconstruire tout le graphe (Fee(e)/Time(e)
-    ne dépendent pas de k, voir costing.py — seul le plan choisi en dépend).
-    seed par défaut = DEMO_IMBALANCE_SEED (déséquilibres reproductibles) ;
-    passer seed=None pour un tirage aléatoire frais."""
+    """Construit un graphe de démo (déséquilibres mock ancrés sur de vrais
+    soldes DEX quand disponibles, voir _generateMockImbalances) et le résout
+    une première fois. Factorisé hors de main() pour être réutilisé par
+    visualization/server.py, qui garde le Graph résultant en mémoire pour
+    re-solver à la volée sur un nouveau k (voir POST /api/solve) sans
+    reconstruire tout le graphe (Fee(e)/Time(e) ne dépendent pas de k, voir
+    costing.py — seul le plan choisi en dépend).
+    seed par défaut = DEMO_IMBALANCE_SEED (partie mock reproductible ; la
+    partie solde réel, elle, varie forcément avec le vrai compte) ;
+    passer seed=None pour un tirage mock frais."""
     dexRegistry = buildDexRegistry()
     dexList = list(dexRegistry.values())
-    _generateRandomImbalances(dexList, seed=seed)
+    _generateMockImbalances(dexList, seed=seed)
     apply_dex_operational_params(dexList, load_dex_operational_params())
 
     gasFeeService = GasFeeService() if ALCHEMY_API_KEY else _ZeroGasFeeService()

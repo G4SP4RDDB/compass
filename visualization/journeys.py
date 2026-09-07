@@ -19,6 +19,13 @@ class Journey:
     fromDex: str
     toDex: str
     amount: float
+    # Stable ENVOYÉE au départ (celle du WithdrawNode d'origine, voir
+    # _extractOneJourney) — jamais ambiguë : chaque trajet démarre sur UN
+    # retrait d'UNE stable précise (voir WithdrawNode.stable). Peut différer
+    # de la stable reçue à l'arrivée si le trajet traverse un swap (voir
+    # EdgeType.Swap) ; ce champ ne suit que le "quoi j'envoie", pas les
+    # conversions en route.
+    stable: str
     hops: list[Edge] = field(default_factory=list)
     # True si ce trajet passe par un nœud où plusieurs flots se mélangent
     # PUIS se re-séparent : dans ce cas l'appariement source/destination
@@ -119,6 +126,7 @@ def _extractOneJourney(
         fromDex=startNode.dex.name,
         toDex=cast(SourceNode, current).dex.name,
         amount=amount,
+        stable=startNode.stable.name,
         hops=[graph.edgeList[i] for i in path],
         plausible=touchesAmbiguous,
     )

@@ -86,6 +86,39 @@ _BRIDGE_PROTOCOL_LABEL: dict[BridgeProtocol, str] = {
 }
 
 
+def _testableHopInfo(edge: Edge) -> dict[str, str] | None:
+    """(dex, chain, stable, hopType) for a Withdraw/Deposit edge, structured
+    for the frontend's "Test This Edge" button — POST /api/test-hop (see
+    visualization/server.py) takes exactly these strings, no parsing of the
+    human-readable `from`/`to` labels required. None for any other hop kind
+    (Swap/Bridge/On-chain transfer), which compass_test does not test (see
+    compass_test/plan_loader.py — same restriction, same reason).
+
+    Deliberately duplicates compass_test/plan_loader.py's
+    _planned_hop_from_edge logic (same Edge model) rather than importing
+    compass_test here — keeps this module (loaded for every graph render)
+    free of a dependency on the test harness."""
+    if edge.u.type == NodeType.Withdraw:
+        withdrawNode = cast(WithdrawNode, edge.u)
+        chain = cast(WalletNode, edge.v).chain
+        return {
+            "dex": withdrawNode.dex.name,
+            "chain": chain.name,
+            "stable": withdrawNode.stable.name,
+            "hopType": "Withdraw",
+        }
+    if edge.u.type == NodeType.Wallet and edge.v.type == NodeType.SourceNode:
+        walletNode = cast(WalletNode, edge.u)
+        dex = cast(SourceNode, edge.v).dex
+        return {
+            "dex": dex.name,
+            "chain": walletNode.chain.name,
+            "stable": walletNode.stable.name,
+            "hopType": "Deposit",
+        }
+    return None
+
+
 def _buildHopList(edges: list[Edge]) -> list[dict[str, Any]]:
     """Hops visibles d'un chemin/trajet (paths.hops et journeys.hops, voir
     hopHtml côté frontend). Une traversée cross-chain est UNE SEULE edge
@@ -101,6 +134,7 @@ def _buildHopList(edges: list[Edge]) -> list[dict[str, Any]]:
             "time": edge.time or 0.0,
             "type": _hopKind(edge),
             "protocol": _BRIDGE_PROTOCOL_LABEL.get(edge.bridgeProtocol) if edge.bridgeProtocol else None,
+            "testable": _testableHopInfo(edge),
         }
         for edge in edges
         if not _isInternalHop(edge)
@@ -119,8 +153,8 @@ def _edgeCost(edge: Edge) -> float:
 
 def _isInternalHop(edge: Edge) -> bool:
     """Jamais une vraie transaction on-chain distincte, mais peut porter un
-    coût/délai réel (voir DEX.withdrawFeeUsd/depositDelaySeconds et
-    costing.computeCost/computeDelay) : seulement caché du détail des hops
+    coût/délai réel (voir DEX.withdrawFeeUsdByChain/depositDelaySecondsByChain
+    et costing.computeCost/computeDelay) : seulement caché du détail des hops
     quand ce coût/délai est nul, sinon l'utilisateur perdrait la seule trace
     visible du frais de retrait/dépôt CEX facturé sur cette DEX."""
     touchesSourceOrWithdraw = edge.u.type in (NodeType.SourceNode, NodeType.Withdraw) or edge.v.type in (
@@ -222,13 +256,19 @@ def _dexNodeDict(dex: DEX, sourceNodeId: int) -> dict[str, Any]:
         "logo": branding.get("logo"),
         "brandColor": branding.get("color"),
         # Pré-remplit le panel "Config" du frontend avec les valeurs déjà
-        # connues côté Python (voir connectors.dex_operational_params) ;
-        # l'utilisateur peut les affiner à la main dans ce panel.
+        # connues côté Python (voir connectors.dex_operational_params), UNE
+        # ENTRÉE PAR CHAIN supportée par ce DEX (voir DEX.withdrawFeeUsdByChain
+        # et consorts) ; l'utilisateur peut les affiner à la main dans ce panel.
         "operationalParams": {
-            "withdrawFeeUsd": dex.withdrawFeeUsd,
-            "withdrawDelaySeconds": dex.withdrawDelaySeconds,
-            "depositFeeUsd": dex.depositFeeUsd,
-            "depositDelaySeconds": dex.depositDelaySeconds,
+            chain.name: {
+                "withdrawFeeUsd": dex.withdrawFeeUsdByChain[chain],
+                "withdrawDelaySeconds": dex.withdrawDelaySecondsByChain[chain],
+                "minWithdrawUsd": dex.minWithdrawUsdByChain[chain],
+                "depositFeeUsd": dex.depositFeeUsdByChain[chain],
+                "depositDelaySeconds": dex.depositDelaySecondsByChain[chain],
+                "minDepositUsd": dex.minDepositUsdByChain[chain],
+            }
+            for chain in dex.chains
         },
     }
 
@@ -346,6 +386,7 @@ def _journeyDict(journey: Journey) -> dict[str, Any]:
         "from": journey.fromDex,
         "to": journey.toDex,
         "amount": journey.amount,
+        "stable": journey.stable,
         "plausible": journey.plausible,
         "totalCost": sum(_edgeCost(edge) for edge in visibleHops),
         # Somme des délais des hops traversés séquentiellement le long de ce

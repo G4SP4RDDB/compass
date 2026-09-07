@@ -1,0 +1,4 @@
+# Extra dependencies beyond compass's own requirements.txt (which already
+# provides requests/python-dotenv, reused here). Install into the same venv:
+#   .venv/bin/pip install -r compass_test/requirements.txt
+web3>=6.15.1,<7

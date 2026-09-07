@@ -17,9 +17,21 @@ from graph.structures.DEXes import DEX, Chain, Stable
 _DEX_SPECS: dict[str, tuple[list[Chain], list[Stable]]] = {
     "Aden": ([Chain.BSC, Chain.ARBITRUM], [Stable.USDT]),
     "Aster": ([Chain.BSC], [Stable.USDT]),
-    "dYdX": ([Chain.ARBITRUM], [Stable.USDC]),
+    # Retiré temporairement (pas supprimé) : un withdraw réel est 3 hops
+    # (subaccount -> main account dYdX, IBC vers Noble, puis CCTP Noble ->
+    # Arbitrum) et seul le premier a une implémentation vendor qui marche —
+    # voir compass_test/runners/unsupported.py::UNSUPPORTED_REASONS["dYdX"]
+    # pour le détail vérifié (2026-09-06). Config déjà saisie dans
+    # connectors/dex_operational_params.json laissée en place, comme pour
+    # Gate ci-dessous.
+    # "dYdX": ([Chain.ARBITRUM], [Stable.USDC]),
     "Extended": ([Chain.ARBITRUM], [Stable.USDC]),
-    "Gate (Perp DEX)": ([Chain.BSC, Chain.ARBITRUM], [Stable.USDT]),
+    # Retiré temporairement (pas supprimé) : à réintégrer plus tard, voir
+    # discussion. Config par (DEX, chain) déjà saisie dans
+    # connectors/dex_operational_params.json laissée en place -- inoffensive
+    # tant que ce DEX est absent du registre (apply_dex_operational_params ne
+    # boucle que sur dexList), réappliquée automatiquement dès sa réactivation.
+    # "Gate (Perp DEX)": ([Chain.BSC, Chain.ARBITRUM], [Stable.USDT]),
     "Hyperliquid": ([Chain.ARBITRUM], [Stable.USDC]),
     "Lighter": ([Chain.ARBITRUM], [Stable.USDC]),
     # CEX avec "dizaines de réseaux, variable par token" (non énuméré) : on

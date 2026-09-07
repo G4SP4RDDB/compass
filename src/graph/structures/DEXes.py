@@ -13,6 +13,28 @@ DEFAULT_WITHDRAW_FEE_USD = 1.0
 DEFAULT_WITHDRAW_DELAY_SECONDS = 300.0
 DEFAULT_DEPOSIT_FEE_USD = 0.0
 DEFAULT_DEPOSIT_DELAY_SECONDS = 60.0
+# Smallest amount this DEX will actually let a withdrawal go through for, PER
+# CHAIN (real exchanges reject a withdraw request below this — e.g. MEXC's
+# live capital/config/getall reports $0.50 USDT min on BSC, $1 on Arbitrum,
+# fetched 2026-09-04). Distinct from withdrawFeeUsd (a cost paid ON a
+# withdrawal, not a floor on its size). Also doubles as the amount
+# compass_test uses for a dry/live test of this DEX's Withdraw edge (see
+# compass_test/plan_loader.py) — a realistic exchange-account-sized amount,
+# not the solver's flow on a deficit DEX's edge, which is still an
+# ungrounded mock (no real TARGET data, see main._generateMockImbalances /
+# connectors/zfund.py) and can be far larger than any real balance.
+DEFAULT_MIN_WITHDRAW_USD = 5.0
+# Mirror of DEFAULT_MIN_WITHDRAW_USD for the crediting side: smallest amount
+# this DEX will actually credit a deposit for, PER CHAIN. Defaults to 0.0
+# (no known floor) rather than a guessed nonzero placeholder — unlike
+# withdrawals, a deposit's minimum isn't a universal exchange concept (MEXC's
+# live capital/config/getall exposes withdrawMin but no deposit equivalent,
+# checked 2026-09-04); fill in a real number per DEX/chain via the Config tab
+# once you have one. compass_test tests a journey at
+# max(minDepositUsd of the destination, minWithdrawUsd of the source) — see
+# compass_test/plan_loader.py — so this only matters once it's actually set
+# above the source's withdraw floor for a given route.
+DEFAULT_MIN_DEPOSIT_USD = 0.0
 
 
 #Ou est ce que l'on recoit les targets ? => target reçue envoyées via Armand
@@ -66,19 +88,27 @@ class DEX:
         # urgence de liquidation (voir graph.urgency.computeDexUrgencySigma).
         # Vide par défaut = pas de position ouverte = pas d'urgence.
         self.positions: list[Position] = []
-        # Frais et délais opérationnels de dépôt/retrait CEX propres à ce DEX
-        # (ex: frais de retrait fixe facturé par la plateforme, délai de
-        # traitement d'un retrait avant que les fonds soient utilisables
-        # ailleurs). Valeurs de départ = placeholders (DEFAULT_* ci-dessus),
-        # à affiner à la main via le panel "Config" du frontend (voir
-        # visualization/web/graph_template.html) et rechargées par
-        # connectors.dex_operational_params. Consommés par
-        # costing.computeCost/computeDelay sur les edges Withdraw->Wallet et
-        # Wallet/Deposit->SourceNode (voir Graph._linkWithdrawalsAndDeposits).
-        self.withdrawFeeUsd: float = DEFAULT_WITHDRAW_FEE_USD
-        self.withdrawDelaySeconds: float = DEFAULT_WITHDRAW_DELAY_SECONDS
-        self.depositFeeUsd: float = DEFAULT_DEPOSIT_FEE_USD
-        self.depositDelaySeconds: float = DEFAULT_DEPOSIT_DELAY_SECONDS
+        # Frais et délais opérationnels de dépôt/retrait CEX, PAR CHAIN (ex:
+        # MEXC peut être plus lent/cher à créditer sur une chain que sur une
+        # autre) — un dict par champ, une entrée par chain supportée par ce
+        # DEX, initialisée aux placeholders DEFAULT_* ci-dessus. Éditable à la
+        # main via le panel "Config" du frontend (voir
+        # visualization/web/graph_template.html, une ligne par (DEX, chain))
+        # et rechargé par connectors.dex_operational_params. Consommés par
+        # costing.computeCost/computeDelay sur les edges Withdraw->Wallet
+        # (chain = celle du WalletNode destination) et Wallet/Deposit->SourceNode
+        # (chain = celle du WalletNode/DepositNode source), voir
+        # Graph._linkWithdrawalsAndDeposits.
+        self.withdrawFeeUsdByChain: dict[Chain, float] = {chain: DEFAULT_WITHDRAW_FEE_USD for chain in supportedChains}
+        self.withdrawDelaySecondsByChain: dict[Chain, float] = {
+            chain: DEFAULT_WITHDRAW_DELAY_SECONDS for chain in supportedChains
+        }
+        self.depositFeeUsdByChain: dict[Chain, float] = {chain: DEFAULT_DEPOSIT_FEE_USD for chain in supportedChains}
+        self.depositDelaySecondsByChain: dict[Chain, float] = {
+            chain: DEFAULT_DEPOSIT_DELAY_SECONDS for chain in supportedChains
+        }
+        self.minWithdrawUsdByChain: dict[Chain, float] = {chain: DEFAULT_MIN_WITHDRAW_USD for chain in supportedChains}
+        self.minDepositUsdByChain: dict[Chain, float] = {chain: DEFAULT_MIN_DEPOSIT_USD for chain in supportedChains}
 
     def update_target(self,newTarget: float) -> None:
         self.target = newTarget

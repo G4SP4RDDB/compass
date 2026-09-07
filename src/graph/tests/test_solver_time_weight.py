@@ -44,10 +44,10 @@ def _zeroOperationalParams(dex: DEX) -> DEX:
     ces tests isolent le comportement de λ(σ_d) sur des edges wallet->source
     dont cost/time sont réécrits à la main, pas les défauts
     DEFAULT_WITHDRAW_*/DEFAULT_DEPOSIT_*."""
-    dex.withdrawFeeUsd = 0.0
-    dex.withdrawDelaySeconds = 0.0
-    dex.depositFeeUsd = 0.0
-    dex.depositDelaySeconds = 0.0
+    dex.withdrawFeeUsdByChain = {chain: 0.0 for chain in dex.withdrawFeeUsdByChain}
+    dex.withdrawDelaySecondsByChain = {chain: 0.0 for chain in dex.withdrawDelaySecondsByChain}
+    dex.depositFeeUsdByChain = {chain: 0.0 for chain in dex.depositFeeUsdByChain}
+    dex.depositDelaySecondsByChain = {chain: 0.0 for chain in dex.depositDelaySecondsByChain}
     return dex
 
 

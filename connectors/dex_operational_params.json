@@ -1,0 +1,88 @@
+{
+  "Aden": {
+    "ARBITRUM": {
+      "depositDelaySeconds": 300.0,
+      "depositFeeUsd": 0.0,
+      "minDepositUsd": 0.0,
+      "minWithdrawUsd": 10.5,
+      "withdrawDelaySeconds": 0.0,
+      "withdrawFeeUsd": 0.5
+    },
+    "BSC": {
+      "depositDelaySeconds": 300.0,
+      "depositFeeUsd": 0.0,
+      "minDepositUsd": 0.01,
+      "minWithdrawUsd": 10.2,
+      "withdrawDelaySeconds": 0.0,
+      "withdrawFeeUsd": 0.2
+    }
+  },
+  "Aster": {
+    "BSC": {
+      "depositDelaySeconds": 180.0,
+      "depositFeeUsd": 0.0,
+      "minDepositUsd": 0.01,
+      "minWithdrawUsd": 0.01,
+      "withdrawDelaySeconds": 0.0,
+      "withdrawFeeUsd": 0.1
+    }
+  },
+  "Extended": {
+    "ARBITRUM": {
+      "depositDelaySeconds": 120.0,
+      "depositFeeUsd": 0.01,
+      "minDepositUsd": 0.02,
+      "minWithdrawUsd": 0.01,
+      "withdrawDelaySeconds": 300.0,
+      "withdrawFeeUsd": 1.0
+    }
+  },
+  "Hyperliquid": {
+    "ARBITRUM": {
+      "depositDelaySeconds": 0.0,
+      "depositFeeUsd": 0.2,
+      "minDepositUsd": 5.0,
+      "minWithdrawUsd": 2.0,
+      "withdrawDelaySeconds": 300.0,
+      "withdrawFeeUsd": 0.2
+    }
+  },
+  "Lighter": {
+    "ARBITRUM": {
+      "depositDelaySeconds": 0.0,
+      "depositFeeUsd": 0.0,
+      "minDepositUsd": 2.0,
+      "minWithdrawUsd": 4.0,
+      "withdrawDelaySeconds": 5.0,
+      "withdrawFeeUsd": 3.0
+    }
+  },
+  "MEXC": {
+    "ARBITRUM": {
+      "depositDelaySeconds": 60.0,
+      "depositFeeUsd": 0.0,
+      "minDepositUsd": 0.01,
+      "minWithdrawUsd": 0.5,
+      "withdrawDelaySeconds": 300.0,
+      "withdrawFeeUsd": 1.0
+    },
+    "BSC": {
+      "depositDelaySeconds": 60.0,
+      "depositFeeUsd": 0.0,
+      "minDepositUsd": 0.01,
+      "minWithdrawUsd": 0.5,
+      "withdrawDelaySeconds": 300.0,
+      "withdrawFeeUsd": 1.0
+    }
+  },
+  "Ondo Perps": {
+    "ARBITRUM": {
+      "depositDelaySeconds": 27.0,
+      "depositFeeUsd": 0.0,
+      "minDepositUsd": 0.01,
+      "minWithdrawUsd": 0.01,
+      "withdrawDelaySeconds": 13.0,
+      "withdrawFeeUsd": 1.0
+    }
+  }
+}

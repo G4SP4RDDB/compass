@@ -15,6 +15,12 @@
     --neg: #e05252;
     --zero: #8b93a1;
     --chosen: #d97706;
+    /* Couleurs de marque des deux stables modélisées (voir graph.structures.DEXes.Stable) :
+       bleu Circle (USDC) / vert Tether (USDT), utilisées à la fois pour la
+       couleur de l'edge et le badge animé dessus (voir createFlowDots) —
+       même couleur des deux côtés, une seule source de vérité ici. */
+    --usdc: #2775ca;
+    --usdt: #26a17b;
     /* Une couleur par type d'opération (voir web_view.py:_hopKind) : distingue
        d'un coup d'œil, dans la liste comme dans les hops détaillés, Withdraw/
        Deposit (comptabilité interne à un DEX, jamais de mouvement de fonds
@@ -36,6 +42,8 @@
       --pos: #3ecb72;
       --neg: #ff6b6b;
       --chosen: #fbbf24;
+      --usdc: #4098e0;
+      --usdt: #2ecc9a;
       --type-withdraw: #fb923c;
       --type-deposit: #2dd4bf;
       --type-transfer: #60a5fa;
@@ -96,7 +104,26 @@
   .node.selected circle { stroke: var(--accent); stroke-width: 3; }
   .node.dimmed circle, .node.dimmed text { opacity: .15; }
 
+  /* Nœud "Wallet" (voir walletHubs) — pas un DEX : deux nœuds FIXES
+     (BSC/ARBITRUM), chacun couvrant USDC+USDT, posés près du centre. Un
+     rectangle arrondi plutôt qu'un cercle pour ne jamais les confondre avec
+     un DEX au premier coup d'œil ; pas d'anneau de solde (pas de concept de
+     surplus/déficit pour un wallet). Partage la classe `.node` (donc les
+     règles génériques .selected/.dimmed/.hidden ci-dessus s'appliquent déjà
+     à son <text>) — seules les règles spécifiques à `rect` (au lieu de
+     `circle`) sont redéfinies ici. */
+  .node-wallet rect {
+    stroke: rgba(0,0,0,.35); stroke-width: 1; cursor: pointer; transition: opacity .15s;
+    fill: var(--accent); fill-opacity: .22;
+  }
+  .node-wallet .wallet-icon { font-size: 15px; pointer-events: none; text-anchor: middle; fill: var(--accent); }
+  .node-wallet.selected rect { stroke: var(--accent); stroke-width: 3; }
+  .node-wallet.dimmed rect { opacity: .15; }
+
   .edge { fill: none; stroke: #8b93a1; pointer-events: none; transition: opacity .15s, stroke-width .15s; }
+  /* Route jamais empruntée par le solveur (voir .edge.chosen ci-dessous) :
+     entièrement masquée plutôt qu'affichée en filigrane, pour que seules les
+     routes réellement utilisées chargent le graphe visuellement. */
   .edge.hidden { display: none; }
   .edge.dimmed { opacity: .04 !important; }
   .edge.highlight { stroke: var(--accent) !important; stroke-width: 2.6 !important; opacity: .95 !important; }
@@ -107,6 +134,16 @@
   .edge.chosen { stroke: var(--chosen); }
   .edge.chosen.approximate { stroke-dasharray: 6 3; }
   .edge.chosen.highlight { stroke: var(--chosen) !important; stroke-width: 3.2 !important; opacity: 1 !important; }
+  /* Stable réellement envoyée sur ce trajet (voir Journey.stable côté Python) :
+     bleu USDC / vert USDT, mêmes couleurs de marque que le badge du .flow-dot
+     ci-dessous, pour lire "quelle stable" d'un coup d'œil sans ouvrir le
+     panneau latéral. Trois classes > .edge.chosen (deux classes) : gagne déjà
+     par spécificité, mais on garde .highlight au-dessus (4 classes) pour que
+     la sélection ne fasse pas disparaître la couleur de la stable. */
+  .edge.chosen.stable-usdc { stroke: var(--usdc); }
+  .edge.chosen.stable-usdt { stroke: var(--usdt); }
+  .edge.chosen.stable-usdc.highlight { stroke: var(--usdc) !important; }
+  .edge.chosen.stable-usdt.highlight { stroke: var(--usdt) !important; }
   /* Léger feedback visuel au survol de la hitbox élargie (.edge-hit) : sans
      ça, la zone cliquable (14px) déborde largement du trait visible (souvent
      <1px) et le tooltip semblerait surgir "de nulle part". */
@@ -115,13 +152,17 @@
      tous les listeners (survol/clic), voir la boucle de création des edges. */
   .edge-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; }
   .edge-hit.clickable { cursor: pointer; }
+  .edge-hit.hidden { display: none; }
   .edge-label { font-size: 8px; fill: var(--muted); pointer-events: none; transition: opacity .15s; }
   .edge-label.hidden { display: none; }
   .edge-label.dimmed { opacity: .04 !important; }
 
-  /* Points animés le long d'une arête "chosen" (voir createFlowDots) : figure
-     le sens réel du flux, DEX source -> DEX destination. */
-  .flow-dot { fill: var(--chosen); }
+  /* Badges animés le long d'une arête "chosen" (voir createFlowDots) : figurent
+     le sens réel du flux, DEX source -> DEX destination, ET la stable
+     transportée (voir Journey.stable) — le vrai logo USDC/USDT (voir
+     visualization/assets/, embarqué une fois dans <defs> et référencé via
+     <use>) plutôt qu'un point neutre. */
+  .flow-dot-badge use { filter: drop-shadow(0 0 1px var(--panel-bg)); }
   .flow-dots { transition: opacity .15s; pointer-events: none; }
   .flow-dots.dimmed { opacity: 0 !important; }
   .flow-dots.hidden { display: none; }
@@ -136,6 +177,26 @@
   #legend .swatch { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
   #legend .line { width: 16px; height: 0; border-top: 2.5px solid var(--chosen); display: inline-block; flex-shrink: 0; }
   #legend .line.dashed { border-top-style: dashed; }
+
+  /* Panel "Wallet" : solde ON-CHAIN RÉEL (pas une estimation, pas un mock)
+     de l'operating wallet en USDC/USDT sur Arbitrum/BSC, voir
+     compass_test/balances.py::list_wallet_balances et GET
+     /api/wallet-balances. Distinct des nodes DEX du graphe (qui restent du
+     mock ancré sur de vrais soldes DEX, voir main._generateMockImbalances) :
+     ceci est un WalletNode réel, la seule balance de ce panneau qui n'est
+     JAMAIS mock. */
+  #walletPanel { margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+  #walletPanel .wallet-address {
+    font-size: 10.5px; color: var(--muted); font-family: ui-monospace, monospace;
+    margin-bottom: 8px; word-break: break-all;
+  }
+  .wallet-row { display: flex; align-items: center; justify-content: space-between; padding: 3px 0; }
+  .wallet-row .wallet-label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .wallet-row .wallet-chain-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  .wallet-row .wallet-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .wallet-row .wallet-value.wallet-na { color: var(--muted); font-weight: 400; font-style: italic; }
+  .wallet-total { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); font-weight: 700; }
+  #walletPanel .wallet-error { color: var(--neg); font-size: 11px; margin-top: 6px; }
 
   /* Bar au-dessus du graphe : formule de coût du solveur + curseur k, voir
      computeTimeWeightedCost (src/graph/costing.py) et graph.urgency.
@@ -177,6 +238,15 @@
   }
   #details { border-top: 1px solid var(--border); padding-top: 12px; }
   #details .placeholder { color: var(--muted); }
+
+  /* "Real balance (live)" vs "Demo target (mock)" in a DEX's Details panel
+     (see renderDexDetails/loadDexRealBalance) — kept visually distinct on
+     purpose: the mock figure drives the solver's demo graph
+     (main._generateMockImbalances), the real one comes straight from that
+     DEX's own API (compass_test/balances.py) and never feeds the solver. */
+  .dex-balance-real { font-weight: 600; }
+  .dex-balance-na { color: var(--muted); font-style: italic; }
+  .mock-note { color: var(--muted); font-size: 10.5px; margin: -4px 0 10px; line-height: 1.4; }
   #details dl { margin: 0 0 10px; }
   #details dt { color: var(--muted); margin-top: 6px; }
   #details dd { margin: 0; font-weight: 600; }
@@ -205,6 +275,48 @@
   .hop .hop-cost { float: right; }
   .hop .hop-protocol { font-style: italic; }
   .no-paths { color: var(--muted); padding: 8px 0; }
+
+  /* "Test This Edge" — runs compass_test against the REAL DEX API for this
+     one hop (see hop_runner.run_single_hop / POST /api/test-hop). Dry-run
+     only until "Run LIVE" is deliberately opened AND confirmed — see
+     compass_test/README.md "Safety model". */
+  .hop-test { margin-top: 4px; clear: both; }
+  .test-edge-btn {
+    font-size: 10px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--accent);
+    background: transparent; color: var(--accent); cursor: pointer; font-weight: 600;
+  }
+  .test-edge-btn:hover { background: var(--accent); color: #fff; }
+  .test-edge-btn:disabled { opacity: .5; cursor: default; background: transparent; color: var(--muted); border-color: var(--border); }
+  .hop-test-result { margin-top: 5px; font-size: 10.5px; }
+  .hop-test-result .test-row { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
+  .hop-test-result .test-label { color: var(--muted); }
+  .hop-test-result .test-status-ok { color: var(--pos); font-weight: 600; }
+  .hop-test-result .test-status-error, .hop-test-result .test-status-unconfirmed { color: var(--neg); font-weight: 600; }
+  .hop-test-result .test-status-dry_run { color: var(--muted); font-weight: 600; }
+  .hop-test-result .test-note { color: var(--muted); font-style: italic; margin-top: 3px; }
+  .hop-test-result .test-err-pos { color: var(--neg); }
+  .hop-test-result .test-err-neg { color: var(--pos); }
+
+  .run-live-btn {
+    margin-top: 6px; font-size: 10px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--neg);
+    background: transparent; color: var(--neg); cursor: pointer; font-weight: 600;
+  }
+  .run-live-btn:hover { background: var(--neg); color: #fff; }
+  .live-confirm-box {
+    margin-top: 6px; padding: 8px; border: 1px solid var(--neg); border-radius: 6px;
+    background: color-mix(in srgb, var(--neg) 8%, transparent);
+  }
+  .live-confirm-box .live-warning { font-weight: 700; color: var(--neg); margin-bottom: 4px; }
+  .live-confirm-box dl { margin: 4px 0; font-size: 10.5px; }
+  .live-confirm-box input[type="text"] {
+    width: 100%; box-sizing: border-box; padding: 4px 6px; margin-top: 4px; border-radius: 4px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 11px;
+  }
+  .live-confirm-actions { display: flex; gap: 6px; margin-top: 6px; }
+  .live-confirm-actions button { font-size: 10px; padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+  .confirm-run-btn { border: 1px solid var(--neg); background: var(--neg); color: #fff; font-weight: 700; }
+  .confirm-run-btn:disabled { opacity: .4; cursor: default; }
+  .cancel-live-btn { border: 1px solid var(--border); background: transparent; color: var(--muted); }
 
   /* Une couleur par type d'opération (voir --type-* dans :root et
      web_view.py:_hopKind) : le badge ET le liseré de la ligne portent la
@@ -253,15 +365,19 @@
 
   #configView { flex: 1; display: none; overflow-y: auto; padding: 18px 24px; }
   #configView.active { display: block; }
+  #testResultsView { flex: 1; display: none; overflow-y: auto; padding: 18px 24px; }
+  #testResultsView.active { display: block; }
   .config-hint { color: var(--muted); font-size: 12px; max-width: 640px; margin: 0 0 16px; line-height: 1.5; }
-  .config-table { border-collapse: collapse; width: 100%; max-width: 780px; font-size: 12.5px; }
+  .config-table { border-collapse: collapse; width: 100%; max-width: 860px; font-size: 12.5px; }
   .config-table th {
     text-align: right; font-weight: 600; color: var(--muted); font-size: 11px;
     text-transform: uppercase; letter-spacing: .03em; padding: 0 6px 8px; border-bottom: 1px solid var(--border);
   }
-  .config-table th:first-child, .config-table td:first-child { text-align: left; }
+  .config-table th:first-child, .config-table td:first-child,
+  .config-table th:nth-child(2), .config-table td:nth-child(2) { text-align: left; }
   .config-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); }
   .config-table td.cfg-name { font-weight: 600; }
+  .config-table td.cfg-chain { color: var(--muted); }
   .config-table input {
     width: 90px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px;
     background: var(--bg); color: var(--text); font-size: 12.5px; text-align: right;
@@ -271,6 +387,43 @@
   .config-status { font-size: 11.5px; color: var(--muted); }
   .config-status-ok { color: var(--pos); }
   .config-status-error, .config-status-offline { color: var(--neg); }
+
+  /* "Test Results" tab : compass_test/ exécute pour de vrai les hops Withdraw/
+     Deposit choisis par le solveur (voir compass_test/README.md) et compare
+     coût/délai réel vs estimé. Lecture seule ici — aucun run (dry-run ou
+     live) n'est déclenchable depuis cette page, voir compass_test/README.md
+     "Safety model" : seul le CLI peut exécuter, cette page ne fait que lire
+     les rapports JSON déjà écrits (GET /api/test-runs). */
+  .results-hint { color: var(--muted); font-size: 12px; max-width: 720px; margin: 0 0 16px; line-height: 1.5; }
+  .results-runs { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .results-runs select {
+    padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--panel-bg); color: var(--text); font-size: 12.5px;
+  }
+  .results-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: .03em; }
+  .results-badge-live { background: color-mix(in srgb, var(--neg) 18%, transparent); color: var(--neg); }
+  .results-badge-dry { background: color-mix(in srgb, var(--muted) 20%, transparent); color: var(--muted); }
+  .results-unsupported { font-size: 11.5px; color: var(--muted); margin-bottom: 14px; }
+  .results-journey { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 14px; overflow: hidden; }
+  .results-journey-head {
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--panel-bg);
+    font-size: 13px; font-weight: 600; border-bottom: 1px solid var(--border);
+  }
+  .results-journey-head .muted { font-weight: 400; color: var(--muted); font-size: 11.5px; }
+  .results-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  .results-table th {
+    text-align: right; font-weight: 600; color: var(--muted); font-size: 11px;
+    text-transform: uppercase; letter-spacing: .03em; padding: 6px 10px; border-bottom: 1px solid var(--border);
+  }
+  .results-table th:first-child, .results-table th:nth-child(2),
+  .results-table td:first-child, .results-table td:nth-child(2) { text-align: left; }
+  .results-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: right; }
+  .results-table tr:last-child td { border-bottom: none; }
+  .results-err-pos { color: var(--neg); }   /* actual worse than estimated */
+  .results-err-neg { color: var(--pos); }   /* actual better than estimated */
+  .results-err-na { color: var(--muted); }
+  .results-status-error, .results-status-unconfirmed { color: var(--neg); font-weight: 600; }
+  .results-empty { color: var(--muted); font-size: 13px; }
 
   #tooltip {
     position: fixed; pointer-events: none; background: var(--panel-bg); color: var(--text);
@@ -287,6 +440,7 @@
     <button class="tab-btn active" id="tabExplore">Explore</button>
     <button class="tab-btn" id="tabOperations">Chosen Operations</button>
     <button class="tab-btn" id="tabConfig">Config</button>
+    <button class="tab-btn" id="tabTestResults">Test Results</button>
   </div>
   <div id="stats"></div>
 </header>
@@ -325,6 +479,14 @@
           <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z" fill="#8b93a1"></path>
           </marker>
+          <!-- Logos officiels USDC/USDT (voir visualization/assets/), embedded en
+               base64 UNE SEULE FOIS ici et referencees via <use> dans createFlowDots
+               plutot que dupliquees par badge -- chaque <use> ne coute que quelques
+               octets, l'image decodee une fois par le navigateur est partagee entre
+               toutes ses instances (voir la remarque cout-ressources deja faite pour
+               l'animation cote client). -->
+          <image id="stable-logo-usdc" width="9" height="9" x="-4.5" y="-4.5" preserveAspectRatio="xMidYMid slice" href="data:image/webp;base64,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"/>
+          <image id="stable-logo-usdt" width="9" height="9" x="-4.5" y="-4.5" preserveAspectRatio="xMidYMid slice" href="data:image/webp;base64,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"/>
         </defs>
         <g id="viewport">
           <text id="centerMark" x="0" y="14">COMPASS</text>
@@ -335,6 +497,10 @@
     </div>
 
     <div id="sidebar">
+      <div id="walletPanel">
+        <h2>Wallet (on-chain, live)</h2>
+        <div id="walletBalances" class="wallet-loading">Loading…</div>
+      </div>
       <h2>Balance</h2>
       <div id="legend">
         <div class="row"><span class="swatch" style="background:var(--pos)"></span> Surplus (withdrawable)</div>
@@ -358,27 +524,56 @@
 
 <div id="configView">
   <p class="config-hint">
-    Frais et délais opérationnels de dépôt/retrait par DEX, utilisés par le solveur
-    (voir costing.computeCost/computeDelay). Les modifications sont enregistrées
-    directement dans <code>connectors/dex_operational_params.json</code> côté
-    serveur dès que vous quittez un champ — inutile d'avoir accès au code pour
-    les changer.
+    Frais et délais opérationnels de dépôt/retrait par DEX ET PAR CHAIN, utilisés
+    par le solveur (voir costing.computeCost/computeDelay). "Min withdraw"/"Min
+    deposit" sont des PLANCHERS, pas des coûts : le plus petit montant qu'un
+    retrait/dépôt réel sur ce DEX/chain accepte (ex: MEXC refuse un retrait en
+    dessous de $0.50 en USDT sur BSC — "min deposit" par défaut à $0, aucun DEX
+    ici n'en impose un connu). C'est aussi ce que <code>compass_test</code>
+    utilise pour choisir le montant d'un test de route : max(min deposit de la
+    destination, min withdraw de la source) — voir compass_test/README.md —
+    plutôt que les déséquilibres de démo qui peuvent être bien plus gros que
+    n'importe quel solde réel. Les modifications sont enregistrées directement
+    dans <code>connectors/dex_operational_params.json</code> côté serveur dès
+    que vous quittez un champ — inutile d'avoir accès au code pour les changer.
   </p>
   <table class="config-table">
     <thead>
       <tr>
         <th>DEX</th>
+        <th>Chain</th>
         <th>Withdraw fee (USD)</th>
         <th>Withdraw delay (s)</th>
+        <th>Min withdraw (USD)</th>
         <th>Deposit fee (USD)</th>
         <th>Deposit delay (s)</th>
+        <th>Min deposit (USD)</th>
       </tr>
     </thead>
     <tbody id="configBody"></tbody>
   </table>
   <div class="config-actions">
+    <button id="configSaveBtn" class="costBar-btn" type="button">Save</button>
     <span class="config-status" id="configStatus"></span>
   </div>
+</div>
+
+<div id="testResultsView">
+  <p class="results-hint">
+    Real Withdraw/Deposit hops from the solver's chosen journeys, actually
+    executed by <code>compass_test</code> (see <code>compass_test/README.md</code>),
+    compared against this graph's own Fee(e)/Time(e) estimate for that exact
+    edge. Read-only — runs are triggered from the command line only
+    (<code>python -m compass_test.cli run --from X --to Y --amount N</code>),
+    never from this page.
+  </p>
+  <div class="results-runs">
+    <label for="resultsRunSelect">Run:</label>
+    <select id="resultsRunSelect"></select>
+    <span id="resultsRunBadge"></span>
+  </div>
+  <div id="resultsUnsupported" class="results-unsupported"></div>
+  <div id="resultsJourneys"></div>
 </div>
 
 <div id="tooltip"></div>
@@ -402,22 +597,111 @@ function sign(dex) {
 }
 
 function layoutNodes(dexNodes) {
-  const ordered = [...dexNodes].sort((a, b) => a.name.localeCompare(b.name));
-  const n = ordered.length;
-  const radius = Math.max(220, (n * MIN_ARC_SPACING) / (2 * Math.PI));
-  const maxActivity = Math.max(1, ...ordered.map(activity));
+  // Grouped by chain affinity, NOT alphabetical — so each Wallet hub's
+  // spokes stay on its own side of the ring and never have to sweep across
+  // the OTHER hub to reach it (BSC hub sits at cx<0, ARBITRUM hub at cx>0,
+  // see walletHubs). An alphabetical ordering scattered ARBITRUM-only DEXes
+  // onto the BSC side and vice versa, which is exactly what made an edge
+  // like "Ondo Perps -> Wallet ARBITRUM" visually cut across Wallet BSC on
+  // its way there even though it never touched it.
+  //
+  // The two chain arcs are spaced INDEPENDENTLY of each other (each group's
+  // own count divides its own 180° half), not as one evenly-spaced full
+  // circle split at the midpoint: today's registry has 5 ARBITRUM-only DEXes
+  // against 1 BSC-only, and forcing an even 50/50 index split would still
+  // overflow ARBITRUM-only DEXes into the BSC half (verified live — that's
+  // exactly what happened on the first attempt at this fix). A DEX
+  // supporting only one chain goes on that chain's arc; one supporting both
+  // (MEXC, Aden) sits right at the top/bottom transition between the two
+  // arcs, fanned out symmetrically if there's more than one.
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  const arbOnly = dexNodes.filter(d => d.chains.includes("ARBITRUM") && !d.chains.includes("BSC")).sort(byName);
+  const bscOnly = dexNodes.filter(d => d.chains.includes("BSC") && !d.chains.includes("ARBITRUM")).sort(byName);
+  const both = dexNodes.filter(d => d.chains.includes("ARBITRUM") && d.chains.includes("BSC")).sort(byName);
+  // Neither chain (shouldn't happen with today's registry, kept so a future
+  // 3rd chain never silently drops a node instead of just landing oddly).
+  const other = dexNodes.filter(d => !d.chains.includes("ARBITRUM") && !d.chains.includes("BSC")).sort(byName);
 
-  ordered.forEach((dex, i) => {
-    const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+  const n = dexNodes.length;
+  // Radius sized off the DENSER of the two half-circle arcs (not the old
+  // full-circle assumption), so per-node spacing on the bigger arc still
+  // meets MIN_ARC_SPACING even when one chain has most of the DEXes.
+  const maxArcCount = Math.max(arbOnly.length, bscOnly.length, 1);
+  const radius = Math.max(220, (maxArcCount * MIN_ARC_SPACING) / Math.PI);
+  const maxActivity = Math.max(1, ...dexNodes.map(activity));
+
+  const place = (dex, angleDeg) => {
+    const angle = (angleDeg * Math.PI) / 180;
     dex.angle = angle;
     dex.cx = Math.cos(angle) * radius;
     dex.cy = Math.sin(angle) * radius;
     dex.r = MIN_R + Math.sqrt(activity(dex) / maxActivity) * (MAX_R - MIN_R);
-  });
+  };
+  // Evenly spaced strictly inside its own half (never touching the exact
+  // ±90° boundary, which is reserved for `both`-chain DEXes below).
+  arbOnly.forEach((dex, j) => place(dex, -90 + ((j + 0.5) / arbOnly.length) * 180));
+  bscOnly.forEach((dex, j) => place(dex, 90 + ((j + 0.5) / bscOnly.length) * 180));
+  // Straddles the exact top (-90°) / bottom (90°) transition point,
+  // symmetric around it — neutral placement for a DEX that can legitimately
+  // route through either hub depending on the journey.
+  const bothTop = both.slice(0, Math.ceil(both.length / 2));
+  const bothBottom = both.slice(Math.ceil(both.length / 2));
+  const fanOutAround = (list, centerDeg) => {
+    const step = 10;
+    list.forEach((dex, j) => place(dex, centerDeg + (j - (list.length - 1) / 2) * step));
+  };
+  fanOutAround(bothTop, -90);
+  fanOutAround(bothBottom, 90);
+  other.forEach((dex, j) => place(dex, other.length ? ((j + 0.5) / other.length) * 360 - 90 : 0));
+
   return radius;
 }
 const ringRadius = layoutNodes(GRAPH_DATA.dexNodes);
 document.getElementById("centerMark").setAttribute("font-size", Math.max(18, ringRadius * 0.09));
+
+// Deux nœuds "Wallet" FIXES (pas des données du solveur — structurels,
+// scope volontairement limité à USDC/USDT sur Arbitrum/BSC, comme le panel
+// "Wallet (on-chain, live)" du sidebar, voir fetchWalletBalances) : tout ce
+// qui passe par un Withdraw ou un Deposit choisi par le solveur transite
+// visuellement par l'un des deux (voir journeyWaypoints). Posés de part et
+// d'autre du centre géométrique pour laisser le watermark "COMPASS" visible
+// dans l'espace entre eux, à `{cx, cy, r}` — le même shape qu'un DEX
+// (voir dexNodes/layoutNodes) — pour que edgeGeometry() marche dessus sans
+// aucune modification.
+const WALLET_HUB_OFFSET = 90, WALLET_HUB_R = 26;
+const walletHubs = [
+  { name: "BSC", chain: "BSC", cx: -WALLET_HUB_OFFSET, cy: 0, r: WALLET_HUB_R },
+  { name: "ARBITRUM", chain: "ARBITRUM", cx: WALLET_HUB_OFFSET, cy: 0, r: WALLET_HUB_R },
+];
+const walletHubByChain = new Map(walletHubs.map(w => [w.chain, w]));
+
+// Décompose une pathEdge (DEX -> DEX) en points de passage réels
+// [dexFrom, hub(s)..., dexTo] à partir de SES PROPRES hops Dijkstra
+// (e.hops, déjà calculés une fois pour toutes — voir web_view.py
+// _buildHopList/_testableHopInfo pour `.testable`), PAS des hops du trajet
+// réellement choisi par le solveur : ça permet de construire tous les
+// segments UNE SEULE FOIS au chargement de la page, et de ne plus jamais
+// avoir à les régénérer sur un re-solve (POST /api/solve) — refreshFromSolveResult
+// se contente déjà de basculer visibilité/classes sur des éléments
+// préexistants, jamais de reconstruire le DOM (voir plus bas). Dans de
+// rares cas, la route affichée peut donc différer légèrement du choix
+// conjoint réel du solveur — même famille d'approximation que
+// Journey.plausible ailleurs dans ce code. Repli sur [dexFrom, dexTo]
+// (le chord direct d'avant) si un hop Withdraw/Deposit manque ou que sa
+// chain ne correspond à aucun hub connu : rien ne disparaît jamais.
+function journeyWaypoints(e) {
+  const fromNode = dexByName.get(e.from), toNode = dexByName.get(e.to);
+  const direct = [fromNode, toNode];
+  const hops = e.hops || [];
+  const withdrawHop = hops.find(h => h.testable && h.testable.hopType === "Withdraw");
+  const depositHop = [...hops].reverse().find(h => h.testable && h.testable.hopType === "Deposit");
+  if (!withdrawHop || !depositHop) return direct;
+
+  const hubA = walletHubByChain.get(withdrawHop.testable.chain);
+  const hubB = walletHubByChain.get(depositHop.testable.chain);
+  if (!hubA || !hubB) return direct;
+  return hubA.chain === hubB.chain ? [fromNode, hubA, toNode] : [fromNode, hubA, hubB, toNode];
+}
 
 // Chaque paire (X, Y) atteignable devient une seule arête directe : le chemin
 // réel (via bridges/swaps) reste calculé côté Python (voir web_view.py
@@ -487,13 +771,147 @@ function typeSlug(type) {
 function typeTag(type) {
   return type ? `<span class="type-tag type-${typeSlug(type)}">${type}</span>` : "";
 }
-function hopHtml(h) {
+// `testable`: only true for hops in the solver's ACTUAL chosen journey (see
+// renderEdgeDetails) — never for the "Estimated routes" cheapest/fastest
+// Dijkstra panel, which is informative only, not something the solver
+// picked (see web_view.py's two-views comment). h.testable itself (from
+// web_view.py::_testableHopInfo) is null for Swap/Bridge hops regardless —
+// compass_test only tests Withdraw/Deposit.
+function hopHtml(h, testable) {
   // A cross-chain move is one hop here (entry/cross/exit already merged
   // server-side, see web_view.py:_buildHopList) — h.protocol names which
   // bridge protocol the solver actually picked for it (GENERIC / CCTP V1 /
   // CCTP V2), null for any non-Bridge hop.
   const protocol = h.protocol ? ` <span class="hop-protocol">via ${h.protocol}</span>` : "";
-  return `<div class="hop type-${typeSlug(h.type)}">${typeTag(h.type)} <span class="hop-cost">${fmt(h.cost)} · ${fmtDuration(h.time)}</span><b>${h.from}</b> → ${h.to}${protocol}</div>`;
+  const testSection = (testable && h.testable) ? testEdgeSectionHtml(h.testable) : "";
+  return `<div class="hop type-${typeSlug(h.type)}">${typeTag(h.type)} <span class="hop-cost">${fmt(h.cost)} · ${fmtDuration(h.time)}</span><b>${h.from}</b> → ${h.to}${protocol}${testSection}</div>`;
+}
+
+function testEdgeSectionHtml(t) {
+  return `<div class="hop-test">
+    <button class="test-edge-btn" data-dex="${t.dex}" data-chain="${t.chain}" data-stable="${t.stable}" data-hop-type="${t.hopType}">Test This Edge</button>
+    <div class="hop-test-result"></div>
+  </div>`;
+}
+
+// "Test This Edge" — POSTs to /api/test-hop (visualization/server.py),
+// which runs compass_test.hop_runner.run_single_hop for real against the
+// live DEX API. ALWAYS dry-run first (no funds moved, no confirmation
+// needed) — "Run LIVE" only appears after a successful dry run, and only if
+// the server itself reports liveAllowed (COMPASS_TEST_ALLOW_LIVE=1 there
+// AND an operating wallet configured) — see compass_test/README.md "Safety
+// model". Re-binds are guarded (data-bound) since renderEdgeDetails can
+// re-run on the same details panel.
+function bindTestEdgeButtons() {
+  document.querySelectorAll(".test-edge-btn").forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => onTestEdgeClick(btn));
+  });
+}
+
+async function onTestEdgeClick(btn) {
+  const ctx = { dex: btn.dataset.dex, chain: btn.dataset.chain, stable: btn.dataset.stable, hopType: btn.dataset.hopType };
+  const resultEl = btn.nextElementSibling;
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = "Testing…";
+  resultEl.innerHTML = `<div class="test-note">Running dry-run test against the real ${ctx.dex} API…</div>`;
+
+  let data;
+  try {
+    data = await postTestHop({ ...ctx, live: false });
+  } catch (e) {
+    resultEl.innerHTML = `<div class="test-note test-status-error">${e.message}</div>`;
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+    return;
+  }
+
+  btn.disabled = false;
+  btn.textContent = "Test Again";
+  renderHopTestResult(resultEl, data, ctx);
+}
+
+async function postTestHop(body) {
+  const res = await fetch("/api/test-hop", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.ok) throw new Error(data.error || `test-hop failed (${res.status})`);
+  return data;
+}
+
+function renderHopTestResult(resultEl, data, ctx) {
+  const p = data.planned, ex = data.executed;
+  const hasCostErr = data.costErrorPct !== null && data.costErrorPct !== undefined;
+  const costErr = hasCostErr ? `${data.costErrorPct > 0 ? "+" : ""}${data.costErrorPct.toFixed(1)}%` : "n/a";
+  const costErrClass = !hasCostErr ? "" : data.costErrorPct > 0 ? "test-err-pos" : data.costErrorPct < 0 ? "test-err-neg" : "";
+
+  let html = `
+    <div class="test-row"><span class="test-label">Amount tested</span><span>$${data.resolvedAmountUsd.toFixed(2)}${data.usedConfiguredMinimum ? " (config min)" : ""}</span></div>
+    <div class="test-row"><span class="test-label">Est. cost / time</span><span>$${p.estimatedCostUsd.toFixed(4)} · ${fmtDuration(p.estimatedTimeSeconds)}</span></div>
+    <div class="test-row"><span class="test-label">Actual cost / time</span><span>${ex.actualCostUsd === null ? "n/a" : "$" + ex.actualCostUsd.toFixed(4)} · ${fmtDuration(ex.actualTimeSeconds)}</span></div>
+    <div class="test-row"><span class="test-label">Cost error</span><span class="${costErrClass}">${costErr}</span></div>
+    <div class="test-row"><span class="test-label">Status</span><span class="test-status-${ex.status}">${ex.status}</span></div>`;
+  if (ex.notes) html += `<div class="test-note">${ex.notes}</div>`;
+  if (!data.live) {
+    html += data.liveAllowed
+      ? `<button class="run-live-btn">Run LIVE</button>`
+      : `<div class="test-note">Live runs are disabled on this server (COMPASS_TEST_ALLOW_LIVE not set, or no operating wallet configured).</div>`;
+  }
+
+  resultEl.innerHTML = html;
+
+  const liveBtn = resultEl.querySelector(".run-live-btn");
+  if (liveBtn) liveBtn.addEventListener("click", () => showLiveConfirm(resultEl, data, ctx));
+}
+
+function showLiveConfirm(resultEl, data, ctx) {
+  if (resultEl.querySelector(".live-confirm-box")) return; // already open
+  const box = document.createElement("div");
+  box.className = "live-confirm-box";
+  box.innerHTML = `
+    <div class="live-warning">⚠ This will move real funds — no undo</div>
+    <dl>
+      <dt>Hop</dt><dd>${ctx.hopType} · ${ctx.dex} on ${ctx.chain} (${ctx.stable})</dd>
+      <dt>Amount</dt><dd>$${data.resolvedAmountUsd.toFixed(2)}</dd>
+      <dt>Wallet</dt><dd style="word-break:break-all">${data.walletAddress || "n/a"}</dd>
+    </dl>
+    <input type="text" placeholder="Type YES to confirm" class="live-confirm-input" autocomplete="off">
+    <div class="live-confirm-actions">
+      <button class="confirm-run-btn" disabled>Confirm &amp; Run Live</button>
+      <button class="cancel-live-btn">Cancel</button>
+    </div>`;
+  resultEl.appendChild(box);
+
+  const input = box.querySelector(".live-confirm-input");
+  const confirmBtn = box.querySelector(".confirm-run-btn");
+  input.addEventListener("input", () => { confirmBtn.disabled = input.value !== "YES"; });
+  box.querySelector(".cancel-live-btn").addEventListener("click", () => box.remove());
+  confirmBtn.addEventListener("click", () => runLiveHop(resultEl, box, data, ctx));
+  input.focus();
+}
+
+async function runLiveHop(resultEl, box, data, ctx) {
+  const confirmBtn = box.querySelector(".confirm-run-btn");
+  const cancelBtn = box.querySelector(".cancel-live-btn");
+  confirmBtn.disabled = true;
+  cancelBtn.disabled = true;
+  confirmBtn.textContent = "Running… this can take a few minutes";
+
+  let liveData;
+  try {
+    liveData = await postTestHop({ ...ctx, amount: data.resolvedAmountUsd, live: true, confirm: "YES" });
+  } catch (e) {
+    box.innerHTML = `<div class="test-note test-status-error">${e.message}</div>`;
+    return;
+  }
+
+  box.remove();
+  renderHopTestResult(resultEl, liveData, ctx);
 }
 // Deux estimations Dijkstra indépendantes (voir web_view.py:_computeDexPaths)
 // coïncident souvent (même route la moins chère et la plus rapide) : plutôt
@@ -506,7 +924,13 @@ function routesEqual(a, b) {
   );
 }
 function routeBlockHtml(label, route) {
-  const hops = route.hops.map(hopHtml).join("") || `<div class="hop">direct — no intermediate hop</div>`;
+  // Explicit single-arg wrapper, NOT route.hops.map(hopHtml) directly:
+  // Array.prototype.map calls its callback as (item, index, array) — passed
+  // bare, hopHtml's second param (`testable`) would silently receive the
+  // INDEX instead (truthy for every hop after the first), which is exactly
+  // how "Test This Edge" first ended up leaking into this informational
+  // routes panel during testing.
+  const hops = route.hops.map(h => hopHtml(h)).join("") || `<div class="hop">direct — no intermediate hop</div>`;
   return `
     <div class="path-row">
       <div class="route-head">
@@ -522,6 +946,24 @@ function routesSectionHtml(cheapest, fastest) {
     : routeBlockHtml("Cheapest", cheapest) + routeBlockHtml("Fastest", fastest);
 }
 
+// La stable ENVOYÉE d'un trajet (voir Journey.stable côté Python) : jamais
+// ambiguë par trajet individuel (un WithdrawNode = une stable précise), mais
+// un même edge visuel (paire de DEX) peut agréger PLUSIEURS trajets si le
+// solveur y a fait transiter plusieurs commodités. On prend celle du premier
+// trajet — sous le registre actuel (une seule stable par DEX), tous les
+// trajets d'un même edge partagent de toute façon la même stable de départ.
+function journeyStable(journeys) {
+  return journeys && journeys.length ? journeys[0].stable : null;
+}
+
+// Applique/retire les classes stable-usdc/stable-usdt sur une edge "chosen"
+// (voir .edge.chosen.stable-* dans :root) : une seule fonction pour rester
+// synchronisée entre la création initiale et refreshFromSolveResult (k re-solvé).
+function setEdgeStableClass(path, stable) {
+  path.classList.toggle("stable-usdc", stable === "USDC");
+  path.classList.toggle("stable-usdt", stable === "USDT");
+}
+
 function edgeGeometry(a, b) {
   const dx = b.cx - a.cx, dy = b.cy - a.cy;
   const dist = Math.hypot(dx, dy) || 1;
@@ -535,19 +977,37 @@ function edgeGeometry(a, b) {
   return { sx, sy, ex, ey, mx, my };
 }
 
-// Chapelet de points animés le long d'une arête "chosen", du DEX source vers
-// le DEX destination (sens naturel du path SVG : M sx,sy -> ex,ey) — façon
-// L2Beat. `speedFactor` étire dur/décalage pour les longues arêtes plutôt que
-// de faire filer les points plus vite dessus qu'ailleurs.
-function createFlowDots(pathId, speedFactor = 1) {
-  const count = 3;
-  const dur = (2.2 * speedFactor).toFixed(2);
+// Id du logo <image> défini une seule fois dans <defs> (voir le <svg> plus
+// haut, embarqué depuis visualization/assets/) par stable — un badge ne fait
+// que <use> cette définition, jamais recopier le data URI base64 (voir la
+// remarque juste avant les <defs>).
+const STABLE_LOGO_ID = { USDC: "stable-logo-usdc", USDT: "stable-logo-usdt" };
+
+// Chapelet de badges "stablecoin" animés le long d'une arête "chosen", du DEX
+// source vers le DEX destination (sens naturel du path SVG : M sx,sy ->
+// ex,ey) — façon L2Beat, mais avec le vrai logo de la stable transportée
+// (voir Journey.stable côté Python et STABLE_LOGO_ID) au lieu d'un point
+// neutre. `speedFactor` étire dur/décalage pour les longues arêtes plutôt que
+// de faire filer les badges plus vite dessus qu'ailleurs. `stable` peut être
+// null (edge pas encore choisie, voir la boucle de création des edges) : pas
+// de badge dans ce cas, juste un groupe vide, laissé masqué par .flow-dots.hidden.
+function createFlowDots(pathId, speedFactor, stable) {
   const g = document.createElementNS(SVG_NS, "g");
   g.setAttribute("class", "flow-dots");
+  const logoId = STABLE_LOGO_ID[stable];
+  if (!logoId) return g;
+
+  const count = 3;
+  const dur = (2.2 * speedFactor).toFixed(2);
   for (let i = 0; i < count; i++) {
-    const dot = document.createElementNS(SVG_NS, "circle");
-    dot.setAttribute("class", "flow-dot");
-    dot.setAttribute("r", "1.8");
+    const badge = document.createElementNS(SVG_NS, "g");
+    badge.setAttribute("class", "flow-dot-badge");
+
+    const use = document.createElementNS(SVG_NS, "use");
+    use.setAttributeNS(XLINK_NS, "xlink:href", `#${logoId}`);
+    use.setAttribute("href", `#${logoId}`);
+    badge.appendChild(use);
+
     const anim = document.createElementNS(SVG_NS, "animateMotion");
     anim.setAttribute("dur", `${dur}s`);
     anim.setAttribute("repeatCount", "indefinite");
@@ -556,8 +1016,9 @@ function createFlowDots(pathId, speedFactor = 1) {
     mpath.setAttributeNS(XLINK_NS, "xlink:href", `#${pathId}`);
     mpath.setAttribute("href", `#${pathId}`);
     anim.appendChild(mpath);
-    dot.appendChild(anim);
-    g.appendChild(dot);
+    badge.appendChild(anim);
+
+    g.appendChild(badge);
   }
   return g;
 }
@@ -572,61 +1033,100 @@ const tooltip = document.getElementById("tooltip");
 let edgeCounter = 0;
 const edgeElements = [];
 for (const e of pathEdges) {
-  const a = dexByName.get(e.from), b = dexByName.get(e.to);
-  const { sx, sy, mx, my, ex, ey } = edgeGeometry(a, b);
+  // A chosen route no longer draws as one direct chord: it bends through
+  // the relevant Wallet hub(s) (see journeyWaypoints) — 2 waypoints = the
+  // old direct chord (fallback), 3 = one hub (same-chain rebalancing), 4 =
+  // two hubs (a bridge crosses chains). `state`/`e` are shared across every
+  // segment of this pathEdge, so refreshFromSolveResult/selectEdge (which
+  // iterate `edgeElements` keyed on `el.e.from`/`el.e.to`) toggle all of a
+  // route's segments together for free — verified, no changes needed there.
+  const waypoints = journeyWaypoints(e);
   const weight = 1 - e.cost / maxCost;
-
-  const pathId = `edge-path-${edgeCounter++}`;
-  const path = document.createElementNS(SVG_NS, "path");
-  path.setAttribute("id", pathId);
-  path.setAttribute("d", `M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}`);
-  path.setAttribute("class", "edge");
-  path.setAttribute("marker-end", "url(#arrow)");
-  path.style.strokeWidth = (0.8 + weight * 2.2).toFixed(2);
-  path.style.opacity = (0.12 + weight * 0.35).toFixed(2);
-  path.dataset.from = e.from;
-  path.dataset.to = e.to;
 
   // `state.journeys` (pas une const capturée) : mutable en place par
   // refreshFromSolveResult quand un nouveau k re-solve le graphe côté
   // serveur, sans avoir à redessiner ni rebrancher les listeners de l'edge.
   const state = { journeys: journeysByPair.get(`${e.from}→${e.to}`) || null };
-  if (state.journeys) {
-    path.classList.add("chosen");
-    path.classList.toggle("approximate", state.journeys.some(j => j.plausible));
-  }
+  state.dotsStable = journeyStable(state.journeys);
 
+  // Un seul label de coût pour toute la route (posé sur le premier segment),
+  // pas un par segment — répéter le même montant à chaque coude serait
+  // redondant. Partagé (même élément) entre toutes les entrées edgeElements
+  // de cette pathEdge : refreshFromSolveResult y applique le même toggle
+  // plusieurs fois de suite, idempotent.
   const label = document.createElementNS(SVG_NS, "text");
   label.setAttribute("class", "edge-label hidden");
-  label.setAttribute("x", mx);
-  label.setAttribute("y", my);
   label.setAttribute("text-anchor", "middle");
   label.textContent = fmt(e.cost);
-
-  edgesLayer.appendChild(path);
   edgesLayer.appendChild(label);
+  let labelPositioned = false;
 
-  // Toujours créées (même arête pas encore choisie) : un k re-solvé côté
-  // serveur peut faire basculer n'importe quelle arête en "chosen" sans
-  // recharger la page, voir refreshFromSolveResult.
-  const pathLength = Math.hypot(ex - sx, ey - sy);
-  const dots = createFlowDots(pathId, Math.max(0.6, pathLength / 260));
-  dots.classList.toggle("hidden", !state.journeys);
-  edgesLayer.appendChild(dots);
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const a = waypoints[i], b = waypoints[i + 1];
+    const { sx, sy, mx, my, ex, ey } = edgeGeometry(a, b);
 
-  // Hitbox invisible bien plus large que le trait visible (voir .edge-hit) :
-  // porte tous les listeners, ajoutée en dernier pour rester au-dessus.
-  const hitPath = document.createElementNS(SVG_NS, "path");
-  hitPath.setAttribute("d", `M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}`);
-  hitPath.setAttribute("class", "edge-hit clickable");
-  edgesLayer.appendChild(hitPath);
+    const pathId = `edge-path-${edgeCounter++}`;
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("id", pathId);
+    path.setAttribute("d", `M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}`);
+    path.setAttribute("class", "edge");
+    path.setAttribute("marker-end", "url(#arrow)");
+    path.style.strokeWidth = (0.8 + weight * 2.2).toFixed(2);
+    path.style.opacity = (0.12 + weight * 0.35).toFixed(2);
+    path.dataset.from = e.from;
+    path.dataset.to = e.to;
 
-  edgeElements.push({ e, path, label, dots, state });
+    // Route jamais empruntée par le solveur : entièrement masquée (voir
+    // .edge.hidden) plutôt qu'affichée en filigrane par coût — seules les
+    // routes réellement choisies restent visibles dans le graphe.
+    path.classList.toggle("hidden", !state.journeys);
+    if (state.journeys) {
+      path.classList.add("chosen");
+      path.classList.toggle("approximate", state.journeys.some(j => j.plausible));
+      setEdgeStableClass(path, state.dotsStable);
+    }
 
-  hitPath.addEventListener("mouseenter", (ev) => { path.classList.add("hover"); showTooltip(ev, edgeTooltipHtml(e, state.journeys)); });
-  hitPath.addEventListener("mousemove", positionTooltip);
-  hitPath.addEventListener("mouseleave", () => { path.classList.remove("hover"); hideTooltip(); });
-  hitPath.addEventListener("click", (ev) => { ev.stopPropagation(); selectEdge(e, state.journeys); });
+    if (!labelPositioned) {
+      label.setAttribute("x", mx);
+      label.setAttribute("y", my);
+      labelPositioned = true;
+    }
+
+    edgesLayer.appendChild(path);
+
+    // Toujours créées (même arête pas encore choisie) : un k re-solvé côté
+    // serveur peut faire basculer n'importe quelle arête en "chosen" sans
+    // recharger la page, voir refreshFromSolveResult. `state.dotsStable` :
+    // stable avec laquelle CE groupe de badges a été construit — un badge
+    // porte la couleur/lettre en dur à la création (voir createFlowDots), donc
+    // un changement de stable après un re-solve exige de recréer le groupe,
+    // pas juste de basculer .hidden (voir refreshFromSolveResult). Chaque
+    // segment anime ses propres badges (relais, pas une seule animation
+    // continue à travers tous les segments — SVG animateMotion/mpath ne
+    // suit qu'un seul <path>).
+    const pathLength = Math.hypot(ex - sx, ey - sy);
+    const speedFactor = Math.max(0.6, pathLength / 260);
+    const dots = createFlowDots(pathId, speedFactor, state.dotsStable);
+    dots.classList.toggle("hidden", !state.journeys);
+    edgesLayer.appendChild(dots);
+
+    // Hitbox invisible bien plus large que le trait visible (voir .edge-hit) :
+    // porte tous les listeners, ajoutée en dernier pour rester au-dessus.
+    // Masquée avec l'edge elle-même (route non choisie) : pas de zone
+    // cliquable fantôme là où rien n'est dessiné.
+    const hitPath = document.createElementNS(SVG_NS, "path");
+    hitPath.setAttribute("d", `M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}`);
+    hitPath.setAttribute("class", "edge-hit clickable");
+    hitPath.classList.toggle("hidden", !state.journeys);
+    edgesLayer.appendChild(hitPath);
+
+    edgeElements.push({ e, path, label, dots, hitPath, state, pathId, speedFactor });
+
+    hitPath.addEventListener("mouseenter", (ev) => { path.classList.add("hover"); showTooltip(ev, edgeTooltipHtml(e, state.journeys)); });
+    hitPath.addEventListener("mousemove", positionTooltip);
+    hitPath.addEventListener("mouseleave", () => { path.classList.remove("hover"); hideTooltip(); });
+    hitPath.addEventListener("click", (ev) => { ev.stopPropagation(); selectEdge(e, state.journeys); });
+  }
 }
 
 const nodeElements = new Map();
@@ -703,6 +1203,50 @@ for (const dex of GRAPH_DATA.dexNodes) {
   g.addEventListener("mouseleave", hideTooltip);
 }
 
+// Nœuds "Wallet" (voir walletHubs plus haut) — même <g class="node ..."> que
+// les DEX (réutilise .selected/.dimmed/.hidden génériques, voir CSS) mais un
+// <rect> arrondi plutôt qu'un <circle> : jamais confondu avec un DEX au
+// premier coup d'œil, et sans anneau de solde (pas de concept de
+// surplus/déficit pour un wallet). Cliquer dessus affiche le solde ON-CHAIN
+// RÉEL de cette chain (voir selectWallet) — même donnée live que le panel
+// "Wallet (on-chain, live)" du sidebar, GET /api/wallet-balances.
+const walletHubElements = new Map();
+for (const hub of walletHubs) {
+  const g = document.createElementNS(SVG_NS, "g");
+  g.setAttribute("class", "node node-wallet");
+  g.setAttribute("transform", `translate(${hub.cx}, ${hub.cy})`);
+  g.dataset.name = hub.name;
+
+  const rect = document.createElementNS(SVG_NS, "rect");
+  rect.setAttribute("x", -hub.r);
+  rect.setAttribute("y", -hub.r);
+  rect.setAttribute("width", hub.r * 2);
+  rect.setAttribute("height", hub.r * 2);
+  rect.setAttribute("rx", 8);
+  g.appendChild(rect);
+
+  const icon = document.createElementNS(SVG_NS, "text");
+  icon.setAttribute("class", "wallet-icon");
+  icon.setAttribute("y", 5);
+  icon.textContent = hub.chain === "ARBITRUM" ? "ARB" : "BSC";
+  g.appendChild(icon);
+
+  const label = document.createElementNS(SVG_NS, "text");
+  label.setAttribute("y", -hub.r - 8);
+  label.setAttribute("text-anchor", "middle");
+  label.textContent = `Wallet · ${hub.chain}`;
+  g.appendChild(label);
+
+  nodesLayer.appendChild(g);
+  walletHubElements.set(hub.chain, g);
+
+  g.addEventListener("click", (ev) => { ev.stopPropagation(); selectWallet(hub.chain); });
+  g.addEventListener("mouseenter", (ev) => showTooltip(ev,
+    `<div><b>Wallet · ${hub.chain}</b></div><div>Click for the real on-chain USDC/USDT balance</div>`));
+  g.addEventListener("mousemove", positionTooltip);
+  g.addEventListener("mouseleave", hideTooltip);
+}
+
 function nodeTooltipHtml(dex) {
   return `<div><b>${dex.name}</b></div>
           <div>balance: ${fmtSigned(dex.inbalance)}</div>
@@ -735,7 +1279,7 @@ function clearSelection() {
   document.querySelectorAll(".edge.highlight").forEach(e => e.classList.remove("highlight"));
   document.getElementById("details").innerHTML = `
     <h2>Details</h2>
-    <div class="placeholder">Click a DEX to inspect it — balance, accepted stablecoins, supported chains, and the cheapest routing path to every other DEX.</div>`;
+    <div class="placeholder">Click a DEX to inspect it — balance, accepted stablecoins, supported chains, and the cheapest routing path to every other DEX. Click a Wallet node for that chain's real on-chain balance.</div>`;
 }
 
 function renderDexDetails(dex) {
@@ -770,12 +1314,20 @@ function renderDexDetails(dex) {
     <h2>Details</h2>
     <dl>
       <dt>DEX</dt><dd>${dex.name}</dd>
-      <dt>Balance</dt><dd class="${sign(dex)}" style="color:var(--${sign(dex)})">${fmtSigned(dex.inbalance)}</dd>
-      <dt>Withdrawable by stable</dt><dd><div class="chip-row">${stableChips}</div></dd>
+      <dt>Real balance (live)</dt><dd id="dexRealBalance"><div class="chip-row"><span class="chip dex-balance-na">Loading…</span></div></dd>
+      <dt>Demo target (mock)</dt><dd class="${sign(dex)}" style="color:var(--${sign(dex)})">${fmtSigned(dex.inbalance)}</dd>
+      <dt>Demo withdrawable (mock)</dt><dd><div class="chip-row">${stableChips}</div></dd>
       <dt>Supported chains</dt><dd><div class="chip-row">${chainChips}</div></dd>
     </dl>
+    <p class="mock-note">"Demo target"/"Demo withdrawable" feed the solver's
+      demo graph (main._generateMockImbalances) — grounded in the real
+      balance below when one is available, but always haircut by a random
+      keep-fraction, never the real number itself. "Real balance" is a live
+      read straight from ${dex.name}'s own API and never feeds the solver.</p>
     <h2>Paths to other DEXes</h2>
     ${rows}`;
+
+  loadDexRealBalance(dex.name);
 
   document.querySelectorAll(".path-head").forEach(head => {
     head.addEventListener("click", (ev) => {
@@ -791,6 +1343,35 @@ function renderDexDetails(dex) {
       if (target) { selectDex(target.name); focusOn(target.cx, target.cy); }
     });
   });
+}
+
+// Fetched on demand (not baked into GRAPH_DATA at page load, unlike the
+// mock target) — GET /api/dex-balances/<name> (server.py), a live call to
+// that DEX's own API every time, see compass_test/balances.py. Guarded
+// against a stale response: if the user clicks a different DEX before this
+// resolves, `selectedName` has already moved on and the old response is
+// dropped rather than overwriting the now-wrong panel. `data.balances` is
+// `{USDT, USDC}` — most DEXes only ever hold one of the two (see each
+// reader's docstring in balances.py), the other comes back as 0.
+async function loadDexRealBalance(dexName) {
+  let data;
+  try {
+    const res = await fetch(`/api/dex-balances/${encodeURIComponent(dexName)}`);
+    data = await res.json();
+  } catch (e) {
+    data = { balances: null, error: "not connected to the balance server" };
+  }
+  if (selectedName !== dexName) return;
+  const el = document.getElementById("dexRealBalance");
+  if (!el) return;
+  if (data.balances === null || data.balances === undefined) {
+    el.innerHTML = `<div class="chip-row"><span class="chip dex-balance-na" title="${data.error || "unavailable"}">n/a</span></div>`;
+  } else {
+    const chips = ["USDT", "USDC"].map(s =>
+      `<span class="chip dex-balance-real">${s}: $${fmt(data.balances[s] || 0)}</span>`
+    ).join("");
+    el.innerHTML = `<div class="chip-row">${chips}</div>`;
+  }
 }
 
 function selectDex(name) {
@@ -813,10 +1394,62 @@ function selectDex(name) {
   renderDexDetails(dex);
 }
 
+// Wallet nodes (see walletHubs) — clicking one shows that chain's REAL
+// on-chain USDC/USDT balance (GET /api/wallet-balances, same live data as
+// the sidebar "Wallet (on-chain, live)" panel, see fetchWalletBalances).
+function selectWallet(chain) {
+  clearSelection();
+  const g = walletHubElements.get(chain);
+  if (g) g.classList.add("selected");
+  renderWalletDetails(chain);
+}
+
+async function renderWalletDetails(chain) {
+  document.getElementById("details").innerHTML = `
+    <h2>Details</h2>
+    <div class="placeholder">Loading real on-chain balance…</div>`;
+
+  let rows;
+  try {
+    const res = await fetch("/api/wallet-balances");
+    if (!res.ok) throw new Error("bad response");
+    rows = (await res.json()).filter(r => r.chain === chain);
+  } catch (err) {
+    document.getElementById("details").innerHTML = `
+      <h2>Details</h2>
+      <dl><dt>Wallet</dt><dd>${chain}</dd></dl>
+      <p class="results-empty">Not connected to the balance server. Serve this page with \`python -m visualization.server\`.</p>`;
+    return;
+  }
+
+  const total = rows.reduce((s, r) => s + (r.balanceUsd || 0), 0);
+  const rowsHtml = rows.map(r => {
+    const value = r.balanceUsd === null
+      ? `<span class="wallet-value wallet-na" title="${r.error || "unavailable"}">n/a</span>`
+      : `<span class="wallet-value">$${fmt(r.balanceUsd)}</span>`;
+    return `<div class="wallet-row"><span class="wallet-label">${r.stable}</span>${value}</div>`;
+  }).join("");
+
+  document.getElementById("details").innerHTML = `
+    <h2>Details</h2>
+    <dl>
+      <dt>Wallet</dt><dd>${chain}</dd>
+      <dt>Scope</dt><dd>USDC, USDT — real on-chain balance, live</dd>
+    </dl>
+    <h2>Balance</h2>
+    ${rowsHtml}
+    <div class="wallet-total"><span>Total</span><span>$${fmt(total)}</span></div>`;
+}
+
 function selectEdge(e, journeys) {
   clearSelection();
   selectedEdgeKey = `${e.from}→${e.to}`;
+  // Highlights the Wallet hub(s) this specific route actually passes
+  // through (see journeyWaypoints) — a waypoint has `.chain` only when it's
+  // a wallet hub, never a DEX node, so this filters to hubs alone.
+  const hubChains = new Set(journeyWaypoints(e).filter(w => w.chain).map(w => w.chain));
   for (const [n, el] of nodeElements) el.classList.toggle("dimmed", n !== e.from && n !== e.to);
+  for (const [chain, el] of walletHubElements) el.classList.toggle("dimmed", !hubChains.has(chain));
   for (const { e: other, path, label, dots } of edgeElements) {
     const isThis = other.from === e.from && other.to === e.to;
     path.classList.toggle("dimmed", !isThis);
@@ -835,7 +1468,7 @@ function renderEdgeDetails(e, journeys) {
     const totalAmount = journeys.reduce((s, j) => s + j.amount, 0);
     const anyApprox = journeys.some(j => j.plausible);
     const journeyBlocks = journeys.map(j => {
-      const jHops = j.hops.map(hopHtml).join("") || `<div class="hop">direct — no intermediate hop</div>`;
+      const jHops = j.hops.map(h => hopHtml(h, true)).join("") || `<div class="hop">direct — no intermediate hop</div>`;
       return `
         <div class="path-row">
           <div class="path-head expanded" style="cursor:default">
@@ -860,6 +1493,8 @@ function renderEdgeDetails(e, journeys) {
     <h2>Estimated routes</h2>
     ${routesSection}
     ${journeySection}`;
+
+  bindTestEdgeButtons();
 }
 
 // Paramètres λ(σ_d) réellement utilisés par le solveur (voir graph.urgency.
@@ -904,7 +1539,25 @@ function refreshFromSolveResult(data) {
     el.state.journeys = journeys;
     el.path.classList.toggle("chosen", !!journeys);
     el.path.classList.toggle("approximate", !!journeys && journeys.some(j => j.plausible));
-    el.dots.classList.toggle("hidden", !journeys);
+    el.path.classList.toggle("hidden", !journeys);
+    setEdgeStableClass(el.path, journeyStable(journeys));
+    el.hitPath.classList.toggle("hidden", !journeys);
+    el.label.classList.toggle("hidden", !journeys || !showCosts.checked);
+
+    const stable = journeyStable(journeys);
+    if (stable !== el.state.dotsStable) {
+      // La stable transportée a changé (edge nouvellement choisie, ou dont
+      // le trajet dominant a changé) : les badges portent leur couleur/lettre
+      // en dur à la création (voir createFlowDots), un simple toggle de
+      // classe ne suffit pas ici, il faut les reconstruire.
+      const fresh = createFlowDots(el.pathId, el.speedFactor, stable);
+      fresh.classList.toggle("hidden", !journeys);
+      el.dots.replaceWith(fresh);
+      el.dots = fresh;
+      el.state.dotsStable = stable;
+    } else {
+      el.dots.classList.toggle("hidden", !journeys);
+    }
   }
 
   opsSummaryData = operationsSummary();
@@ -992,7 +1645,9 @@ searchInput.addEventListener("keydown", (ev) => {
 
 const showCosts = document.getElementById("showCosts");
 showCosts.addEventListener("change", () => {
-  for (const { label } of edgeElements) label.classList.toggle("hidden", !showCosts.checked);
+  // Un label ne réapparaît jamais pour une route non choisie (voir .edge.hidden) :
+  // la case ne fait que révéler les coûts des routes déjà visibles.
+  for (const { label, state } of edgeElements) label.classList.toggle("hidden", !showCosts.checked || !state.journeys);
 });
 
 let view = { x: 0, y: 0, k: 1 };
@@ -1086,6 +1741,44 @@ function renderStats() {
 }
 renderStats();
 
+// Panel "Wallet" : solde ON-CHAIN RÉEL de l'operating wallet, jamais un mock
+// — voir compass_test/balances.py::list_wallet_balances / GET
+// /api/wallet-balances (server.py). Chargé une fois au démarrage de la
+// page ; USDC/USDT sur Arbitrum/BSC uniquement pour l'instant.
+const WALLET_CHAIN_DOT = { ARBITRUM: "#28a0f0", BSC: "#f0b90b" };
+
+async function fetchWalletBalances() {
+  const el = document.getElementById("walletBalances");
+  let rows;
+  try {
+    const res = await fetch("/api/wallet-balances");
+    if (!res.ok) throw new Error("bad response");
+    rows = await res.json();
+  } catch (e) {
+    el.innerHTML = `<p class="wallet-error">Not connected to the wallet balance server. Serve this page with \`python -m visualization.server\`.</p>`;
+    return;
+  }
+
+  const rowsHtml = rows.map(r => {
+    const dot = WALLET_CHAIN_DOT[r.chain] || "var(--muted)";
+    const value = r.balanceUsd === null
+      ? `<span class="wallet-value wallet-na" title="${r.error || 'unavailable'}">n/a</span>`
+      : `<span class="wallet-value">$${fmt(r.balanceUsd)}</span>`;
+    return `<div class="wallet-row">
+      <span class="wallet-label"><span class="wallet-chain-dot" style="background:${dot}"></span>${r.chain} / ${r.stable}</span>
+      ${value}
+    </div>`;
+  }).join("");
+
+  const total = rows.reduce((sum, r) => sum + (r.balanceUsd || 0), 0);
+  const anyMissing = rows.some(r => r.balanceUsd === null);
+
+  document.getElementById("walletBalances").innerHTML = `
+    ${rowsHtml}
+    <div class="wallet-total"><span>Total</span><span>$${fmt(total)}${anyMissing ? "+" : ""}</span></div>`;
+}
+fetchWalletBalances();
+
 requestAnimationFrame(fitToScreen);
 window.addEventListener("resize", fitToScreen);
 
@@ -1121,23 +1814,27 @@ function switchTab(name) {
   document.getElementById("exploreView").classList.toggle("hidden", name !== "explore");
   document.getElementById("operationsView").classList.toggle("active", name === "operations");
   document.getElementById("configView").classList.toggle("active", name === "config");
+  document.getElementById("testResultsView").classList.toggle("active", name === "testResults");
   document.getElementById("tabExplore").classList.toggle("active", name === "explore");
   document.getElementById("tabOperations").classList.toggle("active", name === "operations");
   document.getElementById("tabConfig").classList.toggle("active", name === "config");
+  document.getElementById("tabTestResults").classList.toggle("active", name === "testResults");
   if (name === "explore") requestAnimationFrame(fitToScreen);
+  if (name === "testResults" && !testResultsLoaded) initTestResults();
 }
 document.getElementById("tabExplore").addEventListener("click", () => switchTab("explore"));
 document.getElementById("tabOperations").addEventListener("click", () => switchTab("operations"));
 document.getElementById("tabConfig").addEventListener("click", () => switchTab("config"));
+document.getElementById("tabTestResults").addEventListener("click", () => switchTab("testResults"));
 
-// Panel "Config" : édition des frais/délais de dépôt/retrait par DEX,
-// enregistrée directement dans connectors/dex_operational_params.json via le
+// Panel "Config" : édition des frais/délais de dépôt/retrait par DEX ET PAR
+// CHAIN, enregistrée directement dans connectors/dex_operational_params.json via le
 // serveur de visualization/server.py (GET/POST /api/config) — plus de
 // copier-coller de JSON, quelqu'un qui n'a que cette page en production peut
 // modifier la config sans toucher au code. localStorage ne sert plus que de
 // repli : page ouverte en fichier local sans serveur, ou serveur injoignable.
 const CONFIG_STORAGE_KEY = "compass_dex_operational_params";
-const CONFIG_FIELDS = ["withdrawFeeUsd", "withdrawDelaySeconds", "depositFeeUsd", "depositDelaySeconds"];
+const CONFIG_FIELDS = ["withdrawFeeUsd", "withdrawDelaySeconds", "minWithdrawUsd", "depositFeeUsd", "depositDelaySeconds", "minDepositUsd"];
 
 function loadStoredConfig() {
   try {
@@ -1156,13 +1853,21 @@ function saveStoredConfig(config) {
   }
 }
 
+// dexConfig[dexName][chainName] = {withdrawFeeUsd, withdrawDelaySeconds,
+// depositFeeUsd, depositDelaySeconds} — un frais/délai par (DEX, chain), pas
+// juste par DEX (voir DEX.withdrawFeeUsdByChain et consorts côté Python).
 const dexConfig = {};
 let configServerAvailable = true;
 
 function buildDexConfig(overrides) {
   for (const dex of GRAPH_DATA.dexNodes) {
-    const defaults = { withdrawFeeUsd: 0, withdrawDelaySeconds: 0, depositFeeUsd: 0, depositDelaySeconds: 0 };
-    dexConfig[dex.name] = Object.assign(defaults, dex.operationalParams || {}, overrides[dex.name] || {});
+    dexConfig[dex.name] = {};
+    const serverChains = dex.operationalParams || {};
+    const overrideChains = overrides[dex.name] || {};
+    for (const chain of dex.chains) {
+      const defaults = { withdrawFeeUsd: 0, withdrawDelaySeconds: 0, minWithdrawUsd: 5, depositFeeUsd: 0, depositDelaySeconds: 0, minDepositUsd: 0 };
+      dexConfig[dex.name][chain] = Object.assign(defaults, serverChains[chain] || {}, overrideChains[chain] || {});
+    }
   }
 }
 
@@ -1190,9 +1895,16 @@ async function initDexConfig() {
 }
 
 let saveTimer = null;
-async function persistConfig() {
+// `force` : ignore le configServerAvailable=false mis en cache par un échec
+// précédent (voir initDexConfig) et retente quand même — pour le bouton
+// "Save" ci-dessous, qui doit pouvoir rattraper le coup si le serveur a été
+// démarré APRÈS le chargement de la page, sans que l'utilisateur ait à
+// recharger. L'auto-save au fil de la frappe (voir renderConfig), lui,
+// continue de respecter le cache pour ne pas marteler un serveur qu'on sait
+// déjà injoignable.
+async function persistConfig(force = false) {
   saveStoredConfig(dexConfig);
-  if (!configServerAvailable) return;
+  if (!configServerAvailable && !force) return;
   setConfigStatus("Saving…");
   try {
     const res = await fetch("/api/config", {
@@ -1201,34 +1913,163 @@ async function persistConfig() {
       body: JSON.stringify(dexConfig),
     });
     if (!res.ok) throw new Error("save failed");
+    configServerAvailable = true;
     setConfigStatus("Saved", "config-status-ok");
   } catch (e) {
+    configServerAvailable = false;
     setConfigStatus("Save failed — check the config server", "config-status-error");
   }
 }
 
 function renderConfig() {
-  const names = GRAPH_DATA.dexNodes.map(d => d.name).sort();
-  document.getElementById("configBody").innerHTML = names.map(name => {
-    const c = dexConfig[name];
-    const cells = CONFIG_FIELDS.map(field =>
-      `<td><input type="number" step="any" data-field="${field}" value="${c[field]}"></td>`
-    ).join("");
-    return `<tr data-dex="${name}"><td class="cfg-name">${name}</td>${cells}</tr>`;
-  }).join("");
+  const dexes = [...GRAPH_DATA.dexNodes].sort((a, b) => a.name.localeCompare(b.name));
+  const rows = [];
+  for (const dex of dexes) {
+    for (const chain of dex.chains) {
+      const c = dexConfig[dex.name][chain];
+      const cells = CONFIG_FIELDS.map(field =>
+        `<td><input type="number" step="any" data-field="${field}" value="${c[field]}"></td>`
+      ).join("");
+      rows.push(
+        `<tr data-dex="${dex.name}" data-chain="${chain}"><td class="cfg-name">${dex.name}</td><td class="cfg-chain">${chain}</td>${cells}</tr>`
+      );
+    }
+  }
+  document.getElementById("configBody").innerHTML = rows.join("");
 
   document.getElementById("configBody").querySelectorAll("input").forEach(input => {
     input.addEventListener("input", () => {
-      const name = input.closest("tr").dataset.dex;
+      const tr = input.closest("tr");
+      const name = tr.dataset.dex;
+      const chain = tr.dataset.chain;
       const value = parseFloat(input.value);
-      dexConfig[name][input.dataset.field] = Number.isFinite(value) ? value : 0;
+      dexConfig[name][chain][input.dataset.field] = Number.isFinite(value) ? value : 0;
       clearTimeout(saveTimer);
       saveTimer = setTimeout(persistConfig, 400);
     });
   });
 }
 
+document.getElementById("configSaveBtn").addEventListener("click", () => {
+  clearTimeout(saveTimer);
+  persistConfig(true);
+});
+
 initDexConfig();
+
+// "Test Results" tab : lecture seule des rapports compass_test/reports/*.json
+// via GET /api/test-runs (liste) / GET /api/test-runs/<runId> (détail), voir
+// visualization/server.py. Aucun contrôle ici ne peut déclencher un run —
+// voir compass_test/README.md "Safety model" : seul le CLI le peut, en
+// particulier un run --live qui déplace de vrais fonds.
+let testResultsLoaded = false;
+
+function fmtUsd4(x) {
+  return x === null || x === undefined ? "n/a" : "$" + x.toFixed(4);
+}
+function fmtPct(x) {
+  if (x === null || x === undefined) return "n/a";
+  return `${x > 0 ? "+" : ""}${x.toFixed(1)}%`;
+}
+function resultsErrClass(x) {
+  if (x === null || x === undefined) return "results-err-na";
+  return x > 0 ? "results-err-pos" : x < 0 ? "results-err-neg" : "";
+}
+
+async function fetchTestRuns() {
+  const res = await fetch("/api/test-runs");
+  if (!res.ok) throw new Error("bad response");
+  return res.json();
+}
+async function fetchTestRun(runId) {
+  const res = await fetch(`/api/test-runs/${encodeURIComponent(runId)}`);
+  if (!res.ok) throw new Error("bad response");
+  return res.json();
+}
+
+function hopRowHtml(hc) {
+  const p = hc.planned, e = hc.executed;
+  const statusClass = e.status !== "ok" ? `results-status-${e.status}` : "";
+  return `<tr>
+    <td>${p.hopType}</td>
+    <td>${p.dex}</td>
+    <td>${p.chain}</td>
+    <td>${fmtUsd4(p.estimatedCostUsd)}</td>
+    <td>${fmtUsd4(e.actualCostUsd)}</td>
+    <td class="${resultsErrClass(hc.costErrorPct)}">${fmtPct(hc.costErrorPct)}</td>
+    <td>${p.estimatedTimeSeconds.toFixed(0)}s</td>
+    <td>${e.actualTimeSeconds.toFixed(0)}s</td>
+    <td class="${resultsErrClass(hc.timeErrorPct)}">${fmtPct(hc.timeErrorPct)}</td>
+    <td class="${statusClass}">${e.status}</td>
+  </tr>`;
+}
+
+function journeyHtml(j) {
+  return `<div class="results-journey">
+    <div class="results-journey-head">
+      <span>${j.fromDex} → ${j.toDex}</span>
+      <span class="muted">
+        ${j.stable} · total est ${fmtUsd4(j.totalEstimatedCostUsd)}/${j.totalEstimatedTimeSeconds.toFixed(0)}s
+        · total actual ${fmtUsd4(j.totalActualCostUsd)}/${j.totalActualTimeSeconds.toFixed(0)}s
+        · cost err ${fmtPct(j.costErrorPct)} · time err ${fmtPct(j.timeErrorPct)}
+      </span>
+    </div>
+    <table class="results-table">
+      <thead><tr>
+        <th>Hop</th><th>DEX</th><th>Chain</th>
+        <th>Est. cost</th><th>Actual cost</th><th>Cost err</th>
+        <th>Est. time</th><th>Actual time</th><th>Time err</th><th>Status</th>
+      </tr></thead>
+      <tbody>${j.hops.map(hopRowHtml).join("")}</tbody>
+    </table>
+  </div>`;
+}
+
+function renderTestRun(run) {
+  document.getElementById("resultsRunBadge").innerHTML =
+    `<span class="results-badge ${run.live ? "results-badge-live" : "results-badge-dry"}">${run.live ? "LIVE" : "DRY RUN"}</span>`;
+
+  document.getElementById("resultsUnsupported").textContent =
+    run.unsupportedDexes && run.unsupportedDexes.length
+      ? `Not yet instrumented: ${run.unsupportedDexes.join(", ")}`
+      : "";
+
+  const journeysEl = document.getElementById("resultsJourneys");
+  journeysEl.innerHTML = run.journeys && run.journeys.length
+    ? run.journeys.map(journeyHtml).join("")
+    : `<p class="results-empty">This run recorded no journeys.</p>`;
+}
+
+async function loadSelectedRun(runId) {
+  try {
+    renderTestRun(await fetchTestRun(runId));
+  } catch (e) {
+    document.getElementById("resultsJourneys").innerHTML = `<p class="results-empty">Could not load run ${runId}.</p>`;
+  }
+}
+
+async function initTestResults() {
+  testResultsLoaded = true;
+  const select = document.getElementById("resultsRunSelect");
+  let runs;
+  try {
+    runs = await fetchTestRuns();
+  } catch (e) {
+    document.getElementById("resultsJourneys").innerHTML =
+      "<p class=\"results-empty\">Not connected to the results server. Serve this page with `python -m visualization.server`.</p>";
+    return;
+  }
+  if (!runs.length) {
+    document.getElementById("resultsJourneys").innerHTML =
+      "<p class=\"results-empty\">No test runs yet — see compass_test/README.md for how to run one (`python -m compass_test.cli run ...`).</p>";
+    return;
+  }
+  select.innerHTML = runs.map(r =>
+    `<option value="${r.runId}">${new Date(r.createdAt * 1000).toLocaleString()} — ${r.live ? "live" : "dry-run"}</option>`
+  ).join("");
+  select.addEventListener("change", () => loadSelectedRun(select.value));
+  await loadSelectedRun(runs[0].runId);
+}
 </script>
 </body>
 </html>

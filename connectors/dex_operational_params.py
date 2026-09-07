@@ -5,14 +5,22 @@ from graph.structures.DEXes import DEX
 
 # Écrit/lu par le panel "Config" du frontend (visualization/web/graph_template.html)
 # via visualization/server.py (GET/POST /api/config) : l'utilisateur édite les
-# frais/délais de dépôt/retrait par DEX directement dans la page, le serveur
-# persiste ici. Absent -> tout le monde reste à 0.0 (voir DEX.__init__).
+# frais/délais de dépôt/retrait PAR (DEX, chain) directement dans la page, le
+# serveur persiste ici. Absent -> tout le monde reste aux placeholders DEFAULT_*
+# (voir DEX.__init__). Format : {dexName: {chainName: {field: value}}}.
 DEFAULT_PARAMS_PATH = Path("connectors/dex_operational_params.json")
 
-CONFIG_FIELDS = ["withdrawFeeUsd", "withdrawDelaySeconds", "depositFeeUsd", "depositDelaySeconds"]
+CONFIG_FIELDS = [
+    "withdrawFeeUsd",
+    "withdrawDelaySeconds",
+    "depositFeeUsd",
+    "depositDelaySeconds",
+    "minWithdrawUsd",
+    "minDepositUsd",
+]
 
 
-def load_dex_operational_params(path: Path | str = DEFAULT_PARAMS_PATH) -> dict[str, dict[str, float]]:
+def load_dex_operational_params(path: Path | str = DEFAULT_PARAMS_PATH) -> dict[str, dict[str, dict[str, float]]]:
     filePath = Path(path)
     if not filePath.exists():
         return {}
@@ -20,7 +28,7 @@ def load_dex_operational_params(path: Path | str = DEFAULT_PARAMS_PATH) -> dict[
 
 
 def save_dex_operational_params(
-    params: dict[str, dict[str, float]], path: Path | str = DEFAULT_PARAMS_PATH
+    params: dict[str, dict[str, dict[str, float]]], path: Path | str = DEFAULT_PARAMS_PATH
 ) -> None:
     """Écrit params sur disque de façon atomique (fichier temporaire + rename)
     pour qu'une requête POST /api/config concurrente ou un crash en cours
@@ -32,12 +40,22 @@ def save_dex_operational_params(
     tmpPath.replace(filePath)
 
 
-def apply_dex_operational_params(dexList: list[DEX], params: dict[str, dict[str, float]]) -> None:
+def apply_dex_operational_params(dexList: list[DEX], params: dict[str, dict[str, dict[str, float]]]) -> None:
     for dex in dexList:
-        values = params.get(dex.name)
-        if not values:
+        chainParams = params.get(dex.name)
+        if not chainParams:
             continue
-        dex.withdrawFeeUsd = values.get("withdrawFeeUsd", dex.withdrawFeeUsd)
-        dex.withdrawDelaySeconds = values.get("withdrawDelaySeconds", dex.withdrawDelaySeconds)
-        dex.depositFeeUsd = values.get("depositFeeUsd", dex.depositFeeUsd)
-        dex.depositDelaySeconds = values.get("depositDelaySeconds", dex.depositDelaySeconds)
+        for chain in dex.chains:
+            values = chainParams.get(chain.name)
+            if not values:
+                continue
+            dex.withdrawFeeUsdByChain[chain] = values.get("withdrawFeeUsd", dex.withdrawFeeUsdByChain[chain])
+            dex.withdrawDelaySecondsByChain[chain] = values.get(
+                "withdrawDelaySeconds", dex.withdrawDelaySecondsByChain[chain]
+            )
+            dex.depositFeeUsdByChain[chain] = values.get("depositFeeUsd", dex.depositFeeUsdByChain[chain])
+            dex.depositDelaySecondsByChain[chain] = values.get(
+                "depositDelaySeconds", dex.depositDelaySecondsByChain[chain]
+            )
+            dex.minWithdrawUsdByChain[chain] = values.get("minWithdrawUsd", dex.minWithdrawUsdByChain[chain])
+            dex.minDepositUsdByChain[chain] = values.get("minDepositUsd", dex.minDepositUsdByChain[chain])

@@ -3,9 +3,9 @@ from typing import cast
 from connectors import chain_block_times
 from connectors.alchemy import AlchemyConnector
 from connectors.gas import GasFeeService, GasOperation
-from connectors.stable_tokens import STABLE_DECIMALS, get_stable_token_address
+from connectors.stable_tokens import get_stable_decimals, get_stable_token_address
 from graph.edge import Edge, EdgeType
-from graph.node import NodeType, SourceNode, WalletNode, WithdrawNode
+from graph.node import DepositNode, NodeType, SourceNode, WalletNode, WithdrawNode
 from graph.structures.bridges import adenBridgeFeeUsd
 from graph.urgency import TimeWeightParams, computeTimeWeight
 
@@ -23,8 +23,11 @@ def computeCost(edge: Edge, gasFeeService: GasFeeService) -> float:
         # plateforme avant que les fonds soient mobilisables ailleurs dans
         # le graphe. WithdrawNode n'a pas de `.chain` (scope dex+stable, pas
         # dex+chain) : sans ce garde-fou en premier, une branche plus bas
-        # lisant edge.u.chain (Swap, Bridge, Deposit) planterait.
-        return cast(WithdrawNode, edge.u).dex.withdrawFeeUsd
+        # lisant edge.u.chain (Swap, Bridge, Deposit) planterait -- la chain
+        # RETENUE pour ce retrait est celle du WalletNode destination
+        # (edge.v), voir DEX.withdrawFeeUsdByChain (frais par chain).
+        withdrawNode = cast(WithdrawNode, edge.u)
+        return withdrawNode.dex.withdrawFeeUsdByChain[cast(WalletNode, edge.v).chain]
 
     if edge.v.type == NodeType.SourceNode:
         # Dépôt comblant le déficit du DEX destination (voir
@@ -35,14 +38,15 @@ def computeCost(edge: Edge, gasFeeService: GasFeeService) -> float:
             # Dépôt DIRECT (WalletNode -> SourceNode, tous les DEX du
             # registre aujourd'hui) : un seul appel de contrat fait à la fois
             # le virement ET le crédit -- ce seul edge porte donc le gas du
-            # virement EN PLUS du frais de dépôt éventuel du DEX, pas de hop
-            # séparé pour ça.
-            return gasFeeService.get_gas_cost_usd(cast(WalletNode, edge.u).chain, GasOperation.TRANSFER) + dex.depositFeeUsd
+            # virement EN PLUS du frais de dépôt éventuel du DEX (par chain,
+            # voir DEX.depositFeeUsdByChain), pas de hop séparé pour ça.
+            wallet = cast(WalletNode, edge.u)
+            return gasFeeService.get_gas_cost_usd(wallet.chain, GasOperation.TRANSFER) + dex.depositFeeUsdByChain[wallet.chain]
         # DepositNode -> SourceNode (DEX.requiresDepositAddress=True) : le
         # gas du virement est déjà facturé sur le hop précédent (Wallet ->
         # DepositNode, branche v.type==Deposit plus bas), ici seulement le
-        # frais de crédit CEX.
-        return dex.depositFeeUsd
+        # frais de crédit CEX pour la chain de cette adresse de dépôt.
+        return dex.depositFeeUsdByChain[cast(DepositNode, edge.u).chain]
 
     if edge.type == EdgeType.Swap:
         # Une seule transaction on-chain, atomique, du wallet source au
@@ -95,15 +99,23 @@ def computeSwapCostBreakpoints(
     connector = alchemyConnector or AlchemyConnector()
     sellTokenAddress = get_stable_token_address(walletIn.chain, walletIn.stable)
     buyTokenAddress = get_stable_token_address(walletIn.chain, walletOut.stable)
-    unitsPerDollar = 10**STABLE_DECIMALS
+    # Sell/buy décimales calculées SÉPARÉMENT (jamais une seule constante
+    # partagée) : un swap ne change jamais de chain (walletOut.chain ==
+    # walletIn.chain, voir Graph._linkSwaps) mais peut changer de stable, et
+    # BSC a justement deux stables à 18 décimales quand tout le reste du
+    # registre est à 6 (voir get_stable_decimals) — les deux valeurs
+    # coïncident aujourd'hui pour toute paire réelle, mais rien ne garantit
+    # que ça reste vrai si une future chain mélange les deux.
+    sellUnitsPerDollar = 10 ** get_stable_decimals(walletIn.chain, walletIn.stable)
+    buyUnitsPerDollar = 10 ** get_stable_decimals(walletIn.chain, walletOut.stable)
 
     breakpoints: list[tuple[float, float]] = [(0.0, 0.0)]
     for step in range(1, NUM_SWAP_COST_SEGMENTS + 1):
         amountInUsd = edge.capacity * step / NUM_SWAP_COST_SEGMENTS
         quote = connector.get_quote(
-            walletIn.chain, sellTokenAddress, buyTokenAddress, round(amountInUsd * unitsPerDollar)
+            walletIn.chain, sellTokenAddress, buyTokenAddress, round(amountInUsd * sellUnitsPerDollar)
         )
-        amountOutUsd = quote.buy_amount / unitsPerDollar
+        amountOutUsd = quote.buy_amount / buyUnitsPerDollar
         costUsd = max(amountInUsd - amountOutUsd, 0.0)
         breakpoints.append((amountInUsd, costUsd))
 
@@ -131,10 +143,11 @@ def computeRealizedSwapSlippageUsd(edge: Edge, alchemyConnector: AlchemyConnecto
     connector = alchemyConnector or AlchemyConnector()
     sellTokenAddress = get_stable_token_address(walletIn.chain, walletIn.stable)
     buyTokenAddress = get_stable_token_address(walletIn.chain, walletOut.stable)
-    unitsPerDollar = 10**STABLE_DECIMALS
+    sellUnitsPerDollar = 10 ** get_stable_decimals(walletIn.chain, walletIn.stable)
+    buyUnitsPerDollar = 10 ** get_stable_decimals(walletIn.chain, walletOut.stable)
 
-    quote = connector.get_quote(walletIn.chain, sellTokenAddress, buyTokenAddress, round(edge.flow * unitsPerDollar))
-    amountOutUsd = quote.buy_amount / unitsPerDollar
+    quote = connector.get_quote(walletIn.chain, sellTokenAddress, buyTokenAddress, round(edge.flow * sellUnitsPerDollar))
+    amountOutUsd = quote.buy_amount / buyUnitsPerDollar
     return max(edge.flow - amountOutUsd, 0.0)
 
 
@@ -160,19 +173,22 @@ def computeTimeWeightedCost(fee: float, edgeTime: float, sigmaD: float, params: 
 def computeDelay(edge: Edge) -> float:
     if edge.u.type == NodeType.Withdraw:
         # Délai de traitement du retrait CEX avant que les fonds soient
-        # mobilisables ailleurs (même edge que dans computeCost ci-dessus).
-        return cast(WithdrawNode, edge.u).dex.withdrawDelaySeconds
+        # mobilisables ailleurs (même edge que dans computeCost ci-dessus,
+        # même chain retenue : celle du WalletNode destination).
+        withdrawNode = cast(WithdrawNode, edge.u)
+        return withdrawNode.dex.withdrawDelaySecondsByChain[cast(WalletNode, edge.v).chain]
 
     if edge.v.type == NodeType.SourceNode:
         dex = cast(SourceNode, edge.v).dex
         if edge.u.type == NodeType.Wallet:
             # Dépôt DIRECT (voir computeCost) : ce même edge porte aussi la
             # confirmation on-chain du virement, pas de hop séparé pour ça.
-            return chain_block_times.get_block_delay_seconds(cast(WalletNode, edge.u).chain) + dex.depositDelaySeconds
+            wallet = cast(WalletNode, edge.u)
+            return chain_block_times.get_block_delay_seconds(wallet.chain) + dex.depositDelaySecondsByChain[wallet.chain]
         # DepositNode -> SourceNode (DEX.requiresDepositAddress=True) : la
         # confirmation on-chain est déjà comptée sur le hop précédent
         # (Wallet -> DepositNode), ici seulement le délai de traitement CEX.
-        return dex.depositDelaySeconds
+        return dex.depositDelaySecondsByChain[cast(DepositNode, edge.u).chain]
 
     if edge.type == EdgeType.Bridge:
         # Traversée inter-chain réelle, en une seule tx atomique (voir

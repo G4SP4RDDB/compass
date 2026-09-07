@@ -1,13 +1,11 @@
-11 operations — $19637.51 moved — $5.0472 total fees — ~5m00s to complete (longest single hop)
+9 operations — $236.22 moved — $5.0319 total fees — ~20m00s to complete (longest single hop)
 
-[Withdraw] Aster withdraw (USDT) -> Wallet BSC/USDT    amount=$3795.80  cost=$1.0000  delay=300s
-[Withdraw] dYdX withdraw (USDC) -> Wallet ARBITRUM/USDC    amount=$3169.12  cost=$1.0000  delay=300s
-[Deposit ] Wallet ARBITRUM/USDC -> Lighter    amount=$2441.61  cost=$0.0033  delay=60s
-[Deposit ] Wallet ARBITRUM/USDC -> Extended    amount=$2273.92  cost=$0.0033  delay=60s
-[Deposit ] Wallet BSC/USDT -> Gate (Perp DEX)    amount=$1929.64  cost=$0.0023  delay=67s
-[Deposit ] Wallet BSC/USDT -> MEXC    amount=$1866.16  cost=$0.0023  delay=67s
-[Withdraw] Aden withdraw (USDT) -> Wallet ARBITRUM/USDT    amount=$1642.22  cost=$1.0000  delay=300s
-[Deposit ] Wallet ARBITRUM/USDT -> MEXC    amount=$972.63  cost=$0.0033  delay=60s
-[Swap    ] Wallet ARBITRUM/USDT -> Wallet ARBITRUM/USDC    amount=$669.59  cost=$0.0326  delay=0s
-[Withdraw] Ondo Perps withdraw (USDC) -> Wallet ARBITRUM/USDC    amount=$653.01  cost=$1.0000  delay=300s
-[Withdraw] Hyperliquid withdraw (USDC) -> Wallet ARBITRUM/USDC    amount=$223.81  cost=$1.0000  delay=300s
+[Withdraw] Aster withdraw (USDT) -> Wallet BSC/USDT    amount=$86.89  cost=$0.1000  delay=0s
+[Deposit ] Wallet BSC/USDT -> MEXC    amount=$67.10  cost=$0.0024  delay=67s
+[Bridge  ] Wallet BSC/USDC -> Wallet ARBITRUM/USDC    amount=$22.78  cost=$0.5056  delay=1200s  via Aden internal bridge
+[Swap    ] Wallet BSC/USDT -> Wallet BSC/USDC    amount=$22.78  cost=$0.0074  delay=7s
+[Deposit ] Wallet ARBITRUM/USDC -> Extended    amount=$15.60  cost=$0.0133  delay=120s
+[Deposit ] Wallet ARBITRUM/USDC -> Hyperliquid    amount=$12.63  cost=$0.2033  delay=0s
+[Withdraw] Lighter withdraw (USDC) -> Wallet ARBITRUM/USDC    amount=$4.38  cost=$3.0000  delay=5s
+[Withdraw] Aden withdraw (USDT) -> Wallet BSC/USDT    amount=$2.99  cost=$0.2000  delay=0s
+[Withdraw] Ondo Perps withdraw (USDC) -> Wallet ARBITRUM/USDC    amount=$1.07  cost=$1.0000  delay=13s
