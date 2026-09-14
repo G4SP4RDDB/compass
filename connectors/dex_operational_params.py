@@ -40,6 +40,21 @@ def save_dex_operational_params(
     tmpPath.replace(filePath)
 
 
+def apply_all_dex_params(dexList: list[DEX]) -> None:
+    """LE point d'entrée à utiliser pour charger tous les paramètres
+    opérationnels sur un registre fraîchement construit : d'abord la config
+    saisie à la main (dex_operational_params.json), puis les délais MESURÉS
+    (dex_measured_delays.json, voir connectors.dex_measured_delays) qui
+    priment sur les délais configurés dans costing.computeDelay. Appelé par
+    main.buildAndSolveGraph ET compass_test.plan_loader, pour que le graphe
+    du frontend et l'estimation d'un hop testé isolément soient toujours
+    calculés sur exactement les mêmes valeurs."""
+    from connectors.dex_measured_delays import apply_measured_delays, load_measured_delays
+
+    apply_dex_operational_params(dexList, load_dex_operational_params())
+    apply_measured_delays(dexList, load_measured_delays())
+
+
 def apply_dex_operational_params(dexList: list[DEX], params: dict[str, dict[str, dict[str, float]]]) -> None:
     for dex in dexList:
         chainParams = params.get(dex.name)

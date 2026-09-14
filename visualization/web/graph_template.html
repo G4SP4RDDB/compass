@@ -171,17 +171,12 @@
     padding: 14px; overflow-y: auto; font-size: 12px; flex-shrink: 0;
   }
   #sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }
-  #legend { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
-  #legend .row { display: flex; align-items: center; gap: 7px; }
-  #legend .swatch { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
-  #legend .line { width: 16px; height: 0; border-top: 2.5px solid var(--chosen); display: inline-block; flex-shrink: 0; }
-  #legend .line.dashed { border-top-style: dashed; }
 
   /* Panel "Wallet" : solde ON-CHAIN RÉEL (pas une estimation, pas un mock)
      de l'operating wallet en USDC/USDT sur Arbitrum/BSC, voir
      compass_test/balances.py::list_wallet_balances et GET
      /api/wallet-balances. Distinct des nodes DEX du graphe (qui restent du
-     mock ancré sur de vrais soldes DEX, voir main._generateMockImbalances) :
+     déséquilibre saisi à la main, voir connectors.dex_imbalances) :
      ceci est un WalletNode réel, la seule balance de ce panneau qui n'est
      JAMAIS mock. */
   #walletPanel { margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
@@ -195,6 +190,17 @@
   .wallet-row .wallet-value { font-weight: 600; font-variant-numeric: tabular-nums; }
   .wallet-row .wallet-value.wallet-na { color: var(--muted); font-weight: 400; font-style: italic; }
   .wallet-total { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); font-weight: 700; }
+  /* Réglages "solver source" d'un wallet (connectors.wallet_sources) :
+     par stable, le solveur peut-il puiser dans ce solde, et jusqu'à combien. */
+  .ws-form { display: grid; grid-template-columns: auto auto 1fr; gap: 6px 10px; align-items: center; font-size: 11.5px; margin: 6px 0 4px; }
+  .ws-form .ws-head { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .03em; }
+  .ws-form input[type="number"] {
+    width: 100%; box-sizing: border-box; padding: 4px 6px; border-radius: 4px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 11.5px;
+  }
+  .ws-form input[type="number"]:disabled { opacity: .45; }
+  .ws-solved { color: var(--muted); font-size: 10.5px; }
+  .ws-solved b { color: var(--text); }
   #walletPanel .wallet-error { color: var(--neg); font-size: 11px; margin-top: 6px; }
 
   .status-note { font-size: 11px; font-style: italic; color: var(--muted); }
@@ -217,14 +223,51 @@
   #details { border-top: 1px solid var(--border); padding-top: 12px; }
   #details .placeholder { color: var(--muted); }
 
-  /* "Real balance (live)" vs "Demo target (mock)" in a DEX's Details panel
+  /* "Real balance (live)" vs the hand-set imbalance in a DEX's Details panel
      (see renderDexDetails/loadDexRealBalance) — kept visually distinct on
      purpose: the mock figure drives the solver's demo graph
-     (main._generateMockImbalances), the real one comes straight from that
+     (connectors.dex_imbalances), the real one comes straight from that
      DEX's own API (compass_test/balances.py) and never feeds the solver. */
   .dex-balance-real { font-weight: 600; }
   .dex-balance-na { color: var(--muted); font-style: italic; }
   .mock-note { color: var(--muted); font-size: 10.5px; margin: -4px 0 10px; line-height: 1.4; }
+
+  /* Formulaire "Imbalance" du panel Details : ce que l'utilisateur tape ici
+     EST ce que le solveur verra au prochain "Run solver" (voir
+     connectors.dex_imbalances, GET/POST /api/imbalances). */
+  .imb-form { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; font-size: 11.5px; margin: 6px 0 4px; }
+  .imb-form label { color: var(--muted); }
+  .imb-form select, .imb-form input[type="number"] {
+    width: 100%; box-sizing: border-box; padding: 4px 6px; border-radius: 4px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 11.5px;
+  }
+  .imb-actions { display: flex; align-items: center; gap: 8px; margin: 6px 0 10px; }
+  .imb-save-btn {
+    font-size: 11px; padding: 4px 10px; border-radius: 4px; border: 1px solid var(--accent);
+    background: var(--accent); color: #fff; cursor: pointer; font-weight: 600;
+  }
+  .imb-save-btn:disabled { opacity: .5; cursor: default; }
+  .imb-status { font-size: 10.5px; color: var(--muted); }
+  .imb-status.ok { color: var(--pos); }
+  .imb-status.error { color: var(--neg); }
+  .imb-summary { font-size: 11px; color: var(--muted); }
+  .imb-summary b { color: var(--text); }
+  .imb-summary.infeasible { color: var(--neg); }
+  .imb-kind-surplus { color: var(--pos); font-weight: 600; }
+  .imb-kind-deficit { color: var(--neg); font-weight: 600; }
+
+  /* "Execute" : exécution LIVE d'un hop choisi par le solveur, au montant
+     du solveur — même route et mêmes gardes-fous que "Run LIVE" (POST
+     /api/test-hop, voir compass_test/README.md "Safety model"). */
+  .execute-btn {
+    font-size: 10px; padding: 3px 10px; border-radius: 4px; border: 1px solid var(--neg);
+    background: transparent; color: var(--neg); cursor: pointer; font-weight: 700;
+  }
+  .execute-btn:hover { background: var(--neg); color: #fff; }
+  .execute-btn:disabled { opacity: .45; cursor: default; background: transparent; color: var(--muted); border-color: var(--border); }
+  .op-row .op-exec { min-width: 70px; text-align: right; }
+  .op-exec-result { grid-column: 1 / -1; width: 100%; }
+  .op-exec-result .hop-test-result { margin: 4px 0 2px 24px; }
   #details dl { margin: 0 0 10px; }
   #details dt { color: var(--muted); margin-top: 6px; }
   #details dd { margin: 0; font-weight: 600; }
@@ -296,6 +339,87 @@
   .confirm-run-btn:disabled { opacity: .4; cursor: default; }
   .cancel-live-btn { border: 1px solid var(--border); background: transparent; color: var(--muted); }
 
+  /* Staged progress for a LIVE run (executor.py's on_stage callback,
+     streamed by POST /api/test-hop — see runLiveHop). Each stage is
+     tagged ON-CHAIN (this wallet's own signed tx) or the venue's own name
+     (its internal processing, off-chain from our side) in a distinct
+     color, on purpose: a deposit landing on-chain and the DEX crediting it
+     internally are two different events with two different failure modes,
+     and collapsing them into one "done" step is exactly what used to hide
+     that. */
+  .exec-stages { margin: 2px 0 8px; display: flex; flex-direction: column; gap: 4px; }
+  .exec-stage { display: flex; align-items: flex-start; gap: 6px; font-size: 10.5px; color: var(--muted); }
+  .exec-stage.done { color: var(--text); }
+  .exec-stage.error { color: var(--neg); }
+  .exec-stage-icon { width: 13px; height: 13px; flex-shrink: 0; margin-top: 1px; display: flex; align-items: center; justify-content: center; font-size: 10px; line-height: 1; }
+  .exec-stage.done .exec-stage-icon { color: var(--pos); font-weight: 700; }
+  .exec-stage.error .exec-stage-icon { color: var(--neg); font-weight: 700; }
+  .exec-stage-tag {
+    flex-shrink: 0; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+    padding: 1px 5px; border-radius: 3px; margin-top: .5px;
+  }
+  .exec-stage-tag.onchain { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+  .exec-stage-tag.exchange { background: color-mix(in srgb, var(--chosen) 20%, transparent); color: var(--chosen); }
+  .exec-spinner {
+    width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+    border: 1.5px solid var(--border); border-top-color: var(--accent);
+    animation: exec-spin .7s linear infinite;
+  }
+  @keyframes exec-spin { to { transform: rotate(360deg); } }
+
+  /* Popup shown while/after a LIVE run executes (see runLiveHop) — on top
+     of everything else so the execution state is visible no matter where
+     on the page (or how far scrolled) the Execute/Run LIVE button was.
+     Base rule is `display:none`, NOT `display:flex`: an ID selector beats
+     the browser's own `[hidden] { display:none }` UA rule on specificity
+     alone, so setting `display:flex` unconditionally here used to show the
+     popup on page load (the `hidden` attribute was present but powerless)
+     and made "closing" it (which only toggles `hidden`) do nothing
+     visible — confirmed live 2026-09-14. `:not([hidden])` keeps `hidden`
+     as the actual single source of truth instead of a second, easy-to-
+     desync `.open` class. */
+  #execModalOverlay {
+    display: none;
+    position: fixed; inset: 0; background: rgba(0, 0, 0, .45); z-index: 1000;
+    align-items: center; justify-content: center; padding: 16px;
+  }
+  #execModalOverlay:not([hidden]) { display: flex; }
+  #execModal {
+    width: 100%; max-width: 420px; max-height: 80vh; overflow-y: auto;
+    background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .35);
+  }
+  .exec-modal-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 12px 14px; border-bottom: 1px solid var(--border); font-weight: 700; font-size: 13px;
+  }
+  #execModalClose {
+    border: none; background: transparent; color: var(--muted); font-size: 13px; cursor: pointer;
+    padding: 2px 6px; border-radius: 4px; line-height: 1;
+  }
+  #execModalClose:hover { background: var(--bg); color: var(--text); }
+  #execModalBody { padding: 14px; }
+  #execModalBody .exec-stages { margin: 0 0 4px; }
+  #execModalBody .exec-stage { font-size: 12px; }
+  #execModalBody .exec-hop-label { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+
+  /* Bottom-right pill the popup collapses into on close WHILE a run is
+     still in flight (see hideExecModal) — clicking it reopens the popup on
+     the same still-updating tracker, instead of losing sight of a live run
+     just because the popup got closed. Same base-rule pitfall as the
+     overlay above, so the same `display:none` + `:not([hidden])` shape. */
+  #execMiniIndicator {
+    display: none;
+    position: fixed; right: 16px; bottom: 16px; z-index: 999;
+    align-items: center; gap: 7px; padding: 8px 14px; border-radius: 20px;
+    background: var(--panel-bg); border: 1px solid var(--border); box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
+    font-size: 11.5px; font-weight: 600; cursor: pointer;
+  }
+  #execMiniIndicator:not([hidden]) { display: flex; }
+  #execMiniIndicator:hover { border-color: var(--accent); }
+  #execMiniIndicator.done { color: var(--pos); border-color: var(--pos); }
+  #execMiniIndicator.error { color: var(--neg); border-color: var(--neg); }
+
   /* Une couleur par type d'opération (voir --type-* dans :root et
      web_view.py:_hopKind) : le badge ET le liseré de la ligne portent la
      même couleur, pour repérer un type d'un coup d'œil sans lire le texte. */
@@ -361,6 +485,14 @@
     background: var(--bg); color: var(--text); font-size: 12.5px; text-align: right;
   }
   .config-table input:focus { outline: none; border-color: var(--accent); }
+  /* Délai configuré supplanté par une mesure compass_test (voir
+     costing.computeDelay) : l'input reste éditable mais visiblement hors
+     circuit, la mesure effective s'affiche juste dessous. */
+  .config-table input.cfg-overridden { opacity: .45; text-decoration: line-through; }
+  .config-table td.cfg-delay { white-space: nowrap; }
+  .cfg-measured { font-size: 10.5px; color: var(--muted); margin-top: 2px; text-align: right; }
+  .cfg-measured-active { color: var(--pos); font-weight: 600; }
+  .cfg-measured-lown { color: var(--neg); }
   .config-actions { display: flex; align-items: center; gap: 10px; margin: 18px 0 8px; }
   .config-status { font-size: 11.5px; color: var(--muted); }
   .config-status-ok { color: var(--pos); }
@@ -426,7 +558,8 @@
 <div id="exploreView">
   <div id="toolbar">
     <label><input type="checkbox" id="showCosts" /> Show cost labels</label>
-    <button id="recomputeBtn" class="costBar-btn" title="Rebuild the graph from scratch — new demo imbalances, same as running `python src/main.py`">↻ Recompute routes</button>
+    <button id="recomputeBtn" class="costBar-btn" title="Rebuild the graph from the imbalances you set on each DEX (click a DEX → Imbalance) and solve — same as running `python src/main.py`">▶ Run solver</button>
+    <span id="imbalanceSummary" class="imb-summary"></span>
     <span id="recomputeStatus" class="status-note"></span>
     <div style="display:flex; align-items:center; gap:6px; margin-left:auto;">
       <button class="zoom-btn" id="zoomOut">−</button>
@@ -465,18 +598,7 @@
         <h2>Wallet (on-chain, live)</h2>
         <div id="walletBalances" class="wallet-loading">Loading…</div>
       </div>
-      <h2>Balance</h2>
-      <div id="legend">
-        <div class="row"><span class="swatch" style="background:var(--pos)"></span> Surplus (withdrawable)</div>
-        <div class="row"><span class="swatch" style="background:var(--neg)"></span> Deficit (needs funding)</div>
-        <div class="row"><span class="swatch" style="background:var(--zero)"></span> Balanced</div>
-        <div class="row"><span class="line"></span> Chosen by solver (click to inspect)</div>
-        <div class="row"><span class="line dashed"></span> ...through a merge/split point (approximate)</div>
-      </div>
-      <div id="details">
-        <h2>Details</h2>
-        <div class="placeholder">Click a DEX to inspect it — balance, accepted stablecoins, supported chains, and the cheapest routing path to every other DEX.</div>
-      </div>
+      <div id="details"></div>
     </div>
   </div>
 </div>
@@ -500,6 +622,12 @@
     n'importe quel solde réel. Les modifications sont enregistrées directement
     dans <code>connectors/dex_operational_params.json</code> côté serveur dès
     que vous quittez un champ — inutile d'avoir accès au code pour les changer.
+    Les <strong>délais</strong> saisis ici ne servent que de repli : dès qu'au
+    moins un run LIVE de ce hop a réussi (onglet Test Results / bouton "Test
+    This Edge"), le solveur utilise la <span class="cfg-measured-active">moyenne
+    mesurée</span> des 10 derniers runs (affichée sous le champ, avec n et
+    l'écart-type), lue depuis <code>connectors/dex_measured_delays.json</code>.
+    Un n faible est signalé en rouge : la moyenne repose sur 1 ou 2 runs.
   </p>
   <table class="config-table">
     <thead>
@@ -541,6 +669,19 @@
 </div>
 
 <div id="tooltip"></div>
+
+<div id="execModalOverlay" hidden>
+  <div id="execModal" role="dialog" aria-modal="true" aria-labelledby="execModalTitle">
+    <div class="exec-modal-head">
+      <span id="execModalTitle">Executing…</span>
+      <button id="execModalClose" title="Close">✕</button>
+    </div>
+    <div id="execModalBody"></div>
+  </div>
+</div>
+<div id="execMiniIndicator" hidden title="Click to see execution progress">
+  <span class="exec-spinner"></span><span id="execMiniText">Transaction pending…</span>
+</div>
 
 <script>
 const GRAPH_DATA = __GRAPH_DATA_JSON__;
@@ -736,21 +877,26 @@ function typeTag(type) {
 // renderEdgeDetails) — never for the "Estimated routes" cheapest/fastest
 // Dijkstra panel, which is informative only, not something the solver
 // picked (see web_view.py's two-views comment). h.testable itself (from
-// web_view.py::_testableHopInfo) is null for Swap/Bridge hops regardless —
-// compass_test only tests Withdraw/Deposit.
-function hopHtml(h, testable) {
+// web_view.py::_testableHopInfo) is null for Bridge hops regardless —
+// compass_test tests Withdraw/Deposit, and Swap (via CoW Swap, BSC/Arbitrum
+// only — `toStable` then names the stable bought).
+function hopHtml(h, testable, executeAmount) {
   // A cross-chain move is one hop here (entry/cross/exit already merged
   // server-side, see web_view.py:_buildHopList) — h.protocol names which
   // bridge protocol the solver actually picked for it (GENERIC / CCTP V1 /
   // CCTP V2), null for any non-Bridge hop.
   const protocol = h.protocol ? ` <span class="hop-protocol">via ${h.protocol}</span>` : "";
-  const testSection = (testable && h.testable) ? testEdgeSectionHtml(h.testable) : "";
+  const testSection = (testable && h.testable) ? testEdgeSectionHtml(h.testable, executeAmount) : "";
   return `<div class="hop type-${typeSlug(h.type)}">${typeTag(h.type)} <span class="hop-cost">${fmt(h.cost)} · ${fmtDuration(h.time)}</span><b>${h.from}</b> → ${h.to}${protocol}${testSection}</div>`;
 }
 
-function testEdgeSectionHtml(t) {
+function testEdgeSectionHtml(t, executeAmount) {
+  // executeAmount: the solver's amount for this journey, so the hop can be
+  // executed for real at that amount (see executeButtonHtml). Absent for
+  // the informational "Estimated routes" panel.
+  const exec = executeAmount ? ` ${executeButtonHtml(t, executeAmount)}` : "";
   return `<div class="hop-test">
-    <button class="test-edge-btn" data-dex="${t.dex}" data-chain="${t.chain}" data-stable="${t.stable}" data-hop-type="${t.hopType}">Test This Edge</button>
+    <button class="test-edge-btn" data-dex="${t.dex}" data-chain="${t.chain}" data-stable="${t.stable}" data-to-stable="${t.toStable || ""}" data-hop-type="${t.hopType}">Test This Edge</button>${exec}
     <div class="hop-test-result"></div>
   </div>`;
 }
@@ -771,9 +917,22 @@ function bindTestEdgeButtons() {
   });
 }
 
-async function onTestEdgeClick(btn) {
+// The (dex, chain, stable[, toStable], hopType) tuple POST /api/test-hop
+// takes, read back off a Test/Execute button's data-* attributes.
+function hopCtxFromButton(btn) {
   const ctx = { dex: btn.dataset.dex, chain: btn.dataset.chain, stable: btn.dataset.stable, hopType: btn.dataset.hopType };
-  const resultEl = btn.nextElementSibling;
+  if (btn.dataset.toStable) ctx.toStable = btn.dataset.toStable;
+  return ctx;
+}
+function hopStablesLabel(ctx) {
+  return ctx.toStable ? `${ctx.stable} → ${ctx.toStable}` : ctx.stable;
+}
+
+async function onTestEdgeClick(btn) {
+  const ctx = hopCtxFromButton(btn);
+  // Not nextElementSibling: an "Execute" button may sit between this
+  // button and the result box (see testEdgeSectionHtml).
+  const resultEl = btn.parentElement.querySelector(".hop-test-result");
   btn.disabled = true;
   const originalLabel = btn.textContent;
   btn.textContent = "Testing…";
@@ -805,15 +964,20 @@ async function postTestHop(body) {
   return data;
 }
 
-function renderHopTestResult(resultEl, data, ctx) {
+function renderHopTestResult(resultEl, data, ctx, stagesHtml) {
   const p = data.planned, ex = data.executed;
   const hasCostErr = data.costErrorPct !== null && data.costErrorPct !== undefined;
   const costErr = hasCostErr ? `${data.costErrorPct > 0 ? "+" : ""}${data.costErrorPct.toFixed(1)}%` : "n/a";
   const costErrClass = !hasCostErr ? "" : data.costErrorPct > 0 ? "test-err-pos" : data.costErrorPct < 0 ? "test-err-neg" : "";
 
-  let html = `
+  // stagesHtml: the step-by-step trail a LIVE run just streamed through
+  // (see runLiveHop / executor.py's on_stage) — kept above the summary
+  // rows instead of being thrown away once the final result is in, so the
+  // on-chain-vs-exchange sequence stays visible, not just the end state.
+  let html = stagesHtml || "";
+  html += `
     <div class="test-row"><span class="test-label">Amount tested</span><span>$${data.resolvedAmountUsd.toFixed(2)}${data.usedConfiguredMinimum ? " (config min)" : ""}</span></div>
-    <div class="test-row"><span class="test-label">Est. cost / time</span><span>$${p.estimatedCostUsd.toFixed(4)} · ${fmtDuration(p.estimatedTimeSeconds)}</span></div>
+    <div class="test-row"><span class="test-label">Est. cost / time</span><span title="${estTimeTitle(p)}">$${p.estimatedCostUsd.toFixed(4)} · ${fmtDuration(p.estimatedTimeSeconds)}${p.timeSource === "measured" ? " (measured)" : ""}</span></div>
     <div class="test-row"><span class="test-label">Actual cost / time</span><span>${ex.actualCostUsd === null ? "n/a" : "$" + ex.actualCostUsd.toFixed(4)} · ${fmtDuration(ex.actualTimeSeconds)}</span></div>
     <div class="test-row"><span class="test-label">Cost error</span><span class="${costErrClass}">${costErr}</span></div>
     <div class="test-row"><span class="test-label">Status</span><span class="test-status-${ex.status}">${ex.status}</span></div>`;
@@ -830,6 +994,130 @@ function renderHopTestResult(resultEl, data, ctx) {
   if (liveBtn) liveBtn.addEventListener("click", () => showLiveConfirm(resultEl, data, ctx));
 }
 
+// Reads a fetch Response body as newline-delimited JSON, calling onEvent(obj)
+// for each line as it arrives — NOT after the whole response is buffered,
+// the whole point being to show progress while a live hop is still running
+// (see POST /api/test-hop's streamed branch in server.py). Tolerates a
+// final line with no trailing "\n" (whatever's left in `buf` once the
+// stream ends).
+async function readNdjsonStream(response, onEvent) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      if (line.trim()) onEvent(JSON.parse(line));
+    }
+  }
+  if (buf.trim()) onEvent(JSON.parse(buf));
+}
+
+// Renders the "stage" events above into #exec-stages as they stream in:
+// the previously-active stage freezes as done/error (spinner -> ✓/✕) and a
+// new spinner starts for the incoming one. `domain` ("onchain" vs
+// "exchange", set by executor.py's on_stage) gets its own colored tag —
+// "On-chain" or the venue's own name (`venueName`, e.g. "Ondo Perps") — so
+// "confirmed on-chain" and "the DEX is now processing it internally" never
+// read as the same kind of event.
+function createStageTracker(container, venueName) {
+  container.innerHTML = `<div class="exec-stages"></div>`;
+  const list = container.querySelector(".exec-stages");
+  let current = null;
+  return {
+    push(message, domain) {
+      if (current) {
+        current.classList.remove("active");
+        current.classList.add("done");
+        current.querySelector(".exec-stage-icon").innerHTML = "✓";
+      }
+      current = document.createElement("div");
+      current.className = "exec-stage active";
+      const tagHtml = domain
+        ? `<span class="exec-stage-tag ${domain === "onchain" ? "onchain" : "exchange"}">${domain === "onchain" ? "On-chain" : (venueName || "Exchange")}</span>`
+        : "";
+      current.innerHTML = `<span class="exec-stage-icon"><span class="exec-spinner"></span></span>${tagHtml}<span class="exec-stage-msg">${message}</span>`;
+      list.appendChild(current);
+    },
+    finish(ok) {
+      if (!current) return;
+      current.classList.remove("active");
+      current.classList.add(ok ? "done" : "error");
+      current.querySelector(".exec-stage-icon").innerHTML = ok ? "✓" : "✕";
+    },
+    html() {
+      return list.outerHTML;
+    },
+  };
+}
+
+// Popup shown for the whole duration of a LIVE run (see runLiveHop) — the
+// inline stage tracker in the Details panel can be scrolled out of view or
+// collapsed by the time the run actually finishes (e.g. an Execute button
+// clicked from the "Chosen Operations" list further down the page); this
+// puts the same live-updating steps front and center regardless.
+//
+// Closing it does NOT abandon a still-running hop (the underlying fetch
+// keeps streaming regardless of whether the popup is on screen) — it
+// collapses into the bottom-right "Transaction pending…" pill instead, so
+// there's still a way back in to watch it. Once the hop is actually done,
+// closing just closes: nothing left to watch. `execRunActive` is the one
+// flag both paths check, so the popup and the pill never disagree about
+// whether something is still in flight.
+const execModalOverlayEl = document.getElementById("execModalOverlay");
+const execModalTitleEl = document.getElementById("execModalTitle");
+const execModalBodyEl = document.getElementById("execModalBody");
+const execMiniEl = document.getElementById("execMiniIndicator");
+const execMiniTextEl = document.getElementById("execMiniText");
+let execRunActive = false;
+
+function openExecModal(hopLabel) {
+  execRunActive = true;
+  execModalTitleEl.textContent = "Executing…";
+  execModalBodyEl.innerHTML = `<div class="exec-hop-label">${hopLabel}</div><div class="exec-modal-stages"></div>`;
+  execMiniEl.hidden = true;
+  execModalOverlayEl.hidden = false;
+  return execModalBodyEl.querySelector(".exec-modal-stages");
+}
+
+// "Close" the popup: minimize to the pending pill if the hop is still
+// running, or dismiss everything if it already finished.
+function hideExecModal() {
+  execModalOverlayEl.hidden = true;
+  if (!execRunActive) {
+    execMiniEl.hidden = true;
+    return;
+  }
+  execMiniEl.className = "";
+  execMiniTextEl.textContent = "Transaction pending…";
+  execMiniEl.hidden = false;
+}
+
+// Called once a run's terminal event (done/error) arrives — updates
+// whichever of the popup/pill is currently the visible one, and flips the
+// pill (if that's what's showing) from a spinner to a final ✓/✕ so closing
+// it mid-run and walking away still surfaces the outcome later.
+function finishExecIndicator(ok, hopLabel) {
+  execRunActive = false;
+  if (execMiniEl.hidden) return; // popup is open — renderHopTestResult/title updates cover it
+  execMiniEl.className = ok ? "done" : "error";
+  execMiniTextEl.textContent = `${ok ? "✓" : "✕"} ${hopLabel} — click to view`;
+}
+
+document.getElementById("execModalClose").addEventListener("click", hideExecModal);
+execModalOverlayEl.addEventListener("click", (ev) => {
+  if (ev.target === execModalOverlayEl) hideExecModal(); // backdrop only, not the modal itself
+});
+execMiniEl.addEventListener("click", () => {
+  execMiniEl.hidden = true;
+  execModalOverlayEl.hidden = false;
+});
+
 function showLiveConfirm(resultEl, data, ctx) {
   if (resultEl.querySelector(".live-confirm-box")) return; // already open
   const box = document.createElement("div");
@@ -837,7 +1125,7 @@ function showLiveConfirm(resultEl, data, ctx) {
   box.innerHTML = `
     <div class="live-warning">⚠ This will move real funds — no undo</div>
     <dl>
-      <dt>Hop</dt><dd>${ctx.hopType} · ${ctx.dex} on ${ctx.chain} (${ctx.stable})</dd>
+      <dt>Hop</dt><dd>${ctx.hopType} · ${ctx.dex} on ${ctx.chain} (${hopStablesLabel(ctx)})</dd>
       <dt>Amount</dt><dd>$${data.resolvedAmountUsd.toFixed(2)}</dd>
       <dt>Wallet</dt><dd style="word-break:break-all">${data.walletAddress || "n/a"}</dd>
     </dl>
@@ -862,17 +1150,62 @@ async function runLiveHop(resultEl, box, data, ctx) {
   confirmBtn.disabled = true;
   cancelBtn.disabled = true;
   confirmBtn.textContent = "Running… this can take a few minutes";
+  box.remove();
+  resultEl.innerHTML = `<div class="test-note">Running — see the popup for live progress…</div>`;
 
-  let liveData;
+  // Live only: dry runs stay on the plain postTestHop/renderHopTestResult
+  // path (onTestEdgeClick) since they're fast enough end-to-end that
+  // staged progress wouldn't show anything. A live run genuinely passes
+  // through distinct stages — see executor.py's on_stage / server.py's
+  // streamed POST /api/test-hop — so this reads the response as it
+  // arrives instead of waiting for the whole thing to finish. Shown in the
+  // popup (not just inline) so it stays visible regardless of where on the
+  // page the Execute/Run LIVE button was.
+  const hopLabel = `${ctx.hopType} · ${ctx.dex} on ${ctx.chain} (${hopStablesLabel(ctx)})`;
+  const modalStagesEl = openExecModal(hopLabel);
+  const tracker = createStageTracker(modalStagesEl, ctx.dex);
+  // Placeholder only for the brief gap before the backend's own first
+  // stage arrives (executor.py's on_stage, e.g. "preparing"/"requesting")
+  // — kept deliberately generic and short-lived, not naming a "server",
+  // since that read as a mystery step of its own rather than a momentary
+  // loading state.
+  tracker.push("Sending the request…");
+
+  let finalEvent = null;
   try {
-    liveData = await postTestHop({ ...ctx, amount: data.resolvedAmountUsd, live: true, confirm: "YES" });
+    const res = await fetch("/api/test-hop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...ctx, amount: data.resolvedAmountUsd, live: true, confirm: "YES" }),
+    });
+    if (!res.body) throw new Error(`test-hop failed (${res.status})`);
+    await readNdjsonStream(res, (event) => {
+      if (event.type === "stage") tracker.push(event.message, event.domain);
+      else finalEvent = event; // the terminal "done" or "error" event
+    });
   } catch (e) {
-    box.innerHTML = `<div class="test-note test-status-error">${e.message}</div>`;
+    tracker.finish(false);
+    execModalTitleEl.textContent = "Execution failed";
+    execModalBodyEl.insertAdjacentHTML("beforeend", `<div class="test-note test-status-error">${e.message}</div>`);
+    resultEl.innerHTML = `<div class="test-note test-status-error">${e.message}</div>`;
+    finishExecIndicator(false, hopLabel);
     return;
   }
 
-  box.remove();
-  renderHopTestResult(resultEl, liveData, ctx);
+  if (!finalEvent || !finalEvent.ok) {
+    tracker.finish(false);
+    const msg = finalEvent ? finalEvent.error : "the connection ended before a result came back";
+    execModalTitleEl.textContent = "Execution failed";
+    execModalBodyEl.insertAdjacentHTML("beforeend", `<div class="test-note test-status-error">${msg}</div>`);
+    resultEl.innerHTML = `<div class="test-note test-status-error">${msg}</div>`;
+    finishExecIndicator(false, hopLabel);
+    return;
+  }
+
+  tracker.finish(true);
+  execModalTitleEl.textContent = "Execution complete";
+  renderHopTestResult(resultEl, finalEvent, ctx, tracker.html());
+  finishExecIndicator(true, hopLabel);
 
   // A live hop just moved real funds — the cached wallet balance is now
   // stale, unlike every other UI action (this is the only place that
@@ -882,6 +1215,66 @@ async function runLiveHop(resultEl, box, data, ctx) {
   fetchWalletBalances();
   if (selectedWalletChain) renderWalletDetails(selectedWalletChain);
 }
+// "Execute" — exécution LIVE d'un hop CHOISI PAR LE SOLVEUR, au montant que
+// le solveur a retenu pour cette arête (pas le montant de test minimal de
+// "Test This Edge"). Même route (POST /api/test-hop live) et mêmes trois
+// gardes-fous que "Run LIVE" (COMPASS_TEST_ALLOW_LIVE côté serveur, confirm
+// "YES", caps $ de executor.run_hop — un montant au-dessus du cap est
+// refusé par le serveur et affiché tel quel ici). GET /api/execution-status
+// dit d'avance si le live est possible, pour griser le bouton sinon.
+let executionStatus = null;
+async function getExecutionStatus() {
+  if (executionStatus) return executionStatus;
+  try {
+    const res = await fetch("/api/execution-status");
+    executionStatus = res.ok ? await res.json() : { liveAllowed: false, walletAddress: null };
+  } catch (e) {
+    executionStatus = { liveAllowed: false, walletAddress: null, offline: true };
+  }
+  return executionStatus;
+}
+
+function executeButtonHtml(t, amount) {
+  return `<button class="execute-btn" data-dex="${t.dex}" data-chain="${t.chain}" data-stable="${t.stable}" data-to-stable="${t.toStable || ""}" data-hop-type="${t.hopType}" data-amount="${amount}" title="Move $${fmt(amount)} for real on ${t.dex} (${t.hopType} on ${t.chain})">Execute</button>`;
+}
+
+function bindExecuteButtons() {
+  const buttons = [...document.querySelectorAll(".execute-btn")].filter(b => !b.dataset.bound);
+  if (!buttons.length) return;
+  buttons.forEach(b => { b.dataset.bound = "1"; });
+  getExecutionStatus().then(st => {
+    buttons.forEach(btn => {
+      if (!st.liveAllowed) {
+        btn.disabled = true;
+        btn.title = st.offline
+          ? "Not connected to the server"
+          : "Live execution is disabled on this server (COMPASS_TEST_ALLOW_LIVE not set, or no operating wallet configured)";
+        return;
+      }
+      if (st.maxUsdPerHop !== undefined && parseFloat(btn.dataset.amount) > st.maxUsdPerHop) {
+        btn.title = `$${fmt(parseFloat(btn.dataset.amount))} exceeds COMPASS_TEST_MAX_USD_PER_HOP=$${st.maxUsdPerHop} — the server will refuse it; raise the cap to execute`;
+      }
+      btn.addEventListener("click", () => onExecuteClick(btn, st));
+    });
+  });
+}
+
+function executeResultEl(btn) {
+  // Chosen Operations row: the result div is the row's last child; in a
+  // details-panel hop it's the .hop-test-result of the same .hop-test box.
+  const row = btn.closest(".op-row");
+  if (row) return row.querySelector(".op-exec-result .hop-test-result");
+  return btn.parentElement.querySelector(".hop-test-result");
+}
+
+function onExecuteClick(btn, st) {
+  const ctx = hopCtxFromButton(btn);
+  const amount = parseFloat(btn.dataset.amount);
+  const resultEl = executeResultEl(btn);
+  if (!resultEl) return;
+  showLiveConfirm(resultEl, { resolvedAmountUsd: amount, walletAddress: st.walletAddress }, ctx);
+}
+
 // Deux estimations Dijkstra indépendantes (voir web_view.py:_computeDexPaths)
 // coïncident souvent (même route la moins chère et la plus rapide) : plutôt
 // que d'afficher deux blocs identiques, on les fusionne quand les hops sont
@@ -1088,6 +1481,79 @@ for (const e of pathEdges) {
   }
 }
 
+// Trajets qui partent de l'argent DÉJÀ dans un wallet (Journey.fromWallet,
+// voir WalletNode.balance côté Python) : pas d'arête DEX -> DEX à laquelle
+// les rattacher (journeysByPair ne matche que des paires de DEX), donc sans
+// ce passage le graphe resterait vide alors que le header annonce des
+// opérations choisies. Un segment "chosen" par (hub de départ, DEX
+// d'arrivée) -- via le second hub si le trajet bridge -- avec les mêmes
+// badges animés ; le clic ouvre le panel du wallet, où le trajet et son
+// bouton Execute sont listés (voir renderWalletDetails).
+const walletJourneyEdges = new Map();
+for (const j of GRAPH_DATA.journeys) {
+  if (!j.fromWallet) continue;
+  const fromChain = j.from.replace(/^Wallet /, "").split("/")[0];
+  const depositHop = [...j.hops].reverse().find(h => h.testable && h.testable.hopType === "Deposit");
+  const toChain = depositHop ? depositHop.testable.chain : fromChain;
+  const key = `${fromChain}→${toChain}→${j.to}`;
+  if (!walletJourneyEdges.has(key)) walletJourneyEdges.set(key, { fromChain, toChain, to: j.to, journeys: [] });
+  walletJourneyEdges.get(key).journeys.push(j);
+}
+for (const we of walletJourneyEdges.values()) {
+  const hubA = walletHubByChain.get(we.fromChain), hubB = walletHubByChain.get(we.toChain), toNode = dexByName.get(we.to);
+  if (!hubA || !toNode) continue;
+  const waypoints = hubB && hubB !== hubA ? [hubA, hubB, toNode] : [hubA, toNode];
+  const total = we.journeys.reduce((s, j) => s + j.amount, 0);
+  const approx = we.journeys.some(j => j.plausible);
+  const stable = we.journeys[0].stable;
+  const e = { from: `Wallet ${we.fromChain}`, to: we.to, fromWallet: true, cost: we.journeys.reduce((s, j) => s + j.totalCost, 0) };
+  const tooltip = `<div><b>Wallet ${we.fromChain}</b> → <b>${we.to}</b></div>
+    <div style="margin-top:4px;color:var(--chosen)"><b>Chosen by solver:</b> ${fmt(total)} ${stable} from the wallet's own balance${approx ? " (approximate)" : ""}</div>`;
+
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const a = waypoints[i], b = waypoints[i + 1];
+    const { sx, sy, mx, my, ex, ey } = edgeGeometry(a, b);
+    const pathId = `edge-path-${edgeCounter++}`;
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("id", pathId);
+    path.setAttribute("d", `M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}`);
+    path.setAttribute("class", "edge chosen");
+    path.classList.toggle("approximate", approx);
+    setEdgeStableClass(path, stable);
+    path.setAttribute("marker-end", "url(#arrow)");
+    path.style.strokeWidth = "2.4";
+    path.style.opacity = "0.9";
+    path.dataset.from = e.from;
+    path.dataset.to = e.to;
+    edgesLayer.appendChild(path);
+
+    const pathLength = Math.hypot(ex - sx, ey - sy);
+    const speedFactor = Math.max(0.6, pathLength / 260);
+    const dots = createFlowDots(pathId, speedFactor, stable);
+    edgesLayer.appendChild(dots);
+
+    const hitPath = document.createElementNS(SVG_NS, "path");
+    hitPath.setAttribute("d", `M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}`);
+    hitPath.setAttribute("class", "edge-hit clickable");
+    edgesLayer.appendChild(hitPath);
+
+    const label = document.createElementNS(SVG_NS, "text");
+    label.setAttribute("class", "edge-label hidden");
+    label.setAttribute("text-anchor", "middle");
+    label.setAttribute("x", mx);
+    label.setAttribute("y", my);
+    label.textContent = fmt(e.cost);
+    edgesLayer.appendChild(label);
+
+    edgeElements.push({ e, path, label, dots, hitPath, state: { journeys: we.journeys, dotsStable: stable }, pathId, speedFactor });
+
+    hitPath.addEventListener("mouseenter", (ev) => { path.classList.add("hover"); showTooltip(ev, tooltip); });
+    hitPath.addEventListener("mousemove", positionTooltip);
+    hitPath.addEventListener("mouseleave", () => { path.classList.remove("hover"); hideTooltip(); });
+    hitPath.addEventListener("click", (ev) => { ev.stopPropagation(); selectWallet(we.fromChain); path.classList.add("highlight"); });
+  }
+}
+
 const nodeElements = new Map();
 for (const dex of GRAPH_DATA.dexNodes) {
   const g = document.createElementNS(SVG_NS, "g");
@@ -1238,9 +1704,135 @@ function clearSelection() {
   document.querySelectorAll(".node.selected").forEach(e => e.classList.remove("selected"));
   document.querySelectorAll(".dimmed").forEach(e => e.classList.remove("dimmed"));
   document.querySelectorAll(".edge.highlight").forEach(e => e.classList.remove("highlight"));
-  document.getElementById("details").innerHTML = `
-    <h2>Details</h2>
-    <div class="placeholder">Click a DEX to inspect it — balance, accepted stablecoins, supported chains, and the cheapest routing path to every other DEX. Click a Wallet node for that chain's real on-chain balance.</div>`;
+  document.getElementById("details").innerHTML = "";
+}
+
+// Déséquilibres saisis à la main, un par DEX (voir connectors.dex_imbalances
+// pour le format) — chargés depuis GET /api/imbalances, sauvegardés en bloc
+// via POST /api/imbalances à chaque "Save" du formulaire ci-dessous. Le
+// graphe/plan affiché ne change qu'au prochain "Run solver" (POST
+// /api/recompute) : `summary` (totaux, faisabilité) est ce que ce prochain
+// run verra, pas ce que le plan courant a utilisé.
+let imbalances = {};
+let imbalanceSummary = null;
+let imbalanceServerAvailable = true;
+
+function renderImbalanceSummary() {
+  const el = document.getElementById("imbalanceSummary");
+  if (!el) return;
+  if (!imbalanceServerAvailable) { el.textContent = ""; return; }
+  const sm = imbalanceSummary;
+  if (!sm) { el.textContent = ""; return; }
+  const parts = [`surplus <b>$${fmt(sm.totalSurplusUsd)}</b> (${sm.surplusDexes.length})`, `deficit <b>$${fmt(sm.totalDeficitUsd)}</b> (${sm.deficitDexes.length})`];
+  el.className = "imb-summary" + (sm.problem ? " infeasible" : "");
+  el.innerHTML = parts.join(" · ") + (sm.problem ? ` — ${sm.problem}` : "");
+}
+
+async function initImbalances() {
+  try {
+    const res = await fetch("/api/imbalances");
+    if (!res.ok) throw new Error("bad response");
+    const data = await res.json();
+    imbalances = data.imbalances || {};
+    imbalanceSummary = data.summary || null;
+    if (data.startupProblem) {
+      const st = document.getElementById("recomputeStatus");
+      st.textContent = `Imbalances on disk were not solvable at startup (${data.startupProblem}) — the plan shown is empty. Fix them and press Run solver.`;
+      st.className = "status-note offline";
+    }
+  } catch (e) {
+    imbalanceServerAvailable = false;
+  }
+  renderImbalanceSummary();
+  if (selectedName && dexByName.has(selectedName)) renderDexDetails(dexByName.get(selectedName));
+}
+
+function imbalanceFormHtml(dex) {
+  if (!imbalanceServerAvailable) {
+    return `<div class="imb-status error">Not connected to the server — imbalances can't be edited here. Serve this page with \`python -m visualization.server\`.</div>`;
+  }
+  const cur = imbalances[dex.name] || {};
+  const kind = cur.kind || "";
+  const amount = cur.amountUsd !== undefined ? cur.amountUsd : "";
+  const stableOpts = dex.stables.map(s => `<option value="${s}" ${cur.stable === s ? "selected" : ""}>${s}</option>`).join("");
+  const chainOpts = [`<option value="">any chain</option>`]
+    .concat(dex.chains.map(c => `<option value="${c}" ${cur.chain === c ? "selected" : ""}>${c}</option>`)).join("");
+  const isSurplus = kind === "surplus";
+  return `
+    <div class="imb-form" data-dex="${dex.name}">
+      <label>Kind</label>
+      <select class="imb-kind">
+        <option value="" ${kind === "" ? "selected" : ""}>balanced (no flow)</option>
+        <option value="surplus" ${kind === "surplus" ? "selected" : ""}>surplus — can send</option>
+        <option value="deficit" ${kind === "deficit" ? "selected" : ""}>deficit — must receive</option>
+      </select>
+      <label>Amount (USD)</label>
+      <input type="number" class="imb-amount" min="0" step="0.01" value="${amount}" ${kind === "" ? "disabled" : ""}>
+      <label class="imb-surplus-only" ${isSurplus ? "" : "hidden"}>Stable</label>
+      <select class="imb-stable imb-surplus-only" ${isSurplus ? "" : "hidden"}>${stableOpts}</select>
+      <label class="imb-surplus-only" ${isSurplus ? "" : "hidden"}>Chain${dex.requiresSameChainWithdraw ? " (required)" : ""}</label>
+      <select class="imb-chain imb-surplus-only" ${isSurplus ? "" : "hidden"}>${chainOpts}</select>
+    </div>
+    <div class="imb-actions">
+      <button class="imb-save-btn" type="button">Save imbalance</button>
+      <span class="imb-status"></span>
+    </div>`;
+}
+
+function bindImbalanceForm(dex) {
+  const form = document.querySelector(`.imb-form[data-dex="${CSS.escape(dex.name)}"]`);
+  if (!form) return;
+  const kindEl = form.querySelector(".imb-kind");
+  const amountEl = form.querySelector(".imb-amount");
+  const saveBtn = form.parentElement.querySelector(".imb-save-btn");
+  const statusEl = form.parentElement.querySelector(".imb-status");
+
+  const syncVisibility = () => {
+    const kind = kindEl.value;
+    amountEl.disabled = kind === "";
+    form.querySelectorAll(".imb-surplus-only").forEach(el => { el.hidden = kind !== "surplus"; });
+    if (dex.requiresSameChainWithdraw && kind === "surplus" && !form.querySelector(".imb-chain").value) {
+      form.querySelector(".imb-chain").value = dex.chains[0];
+    }
+  };
+  kindEl.addEventListener("change", syncVisibility);
+  syncVisibility();
+
+  saveBtn.addEventListener("click", async () => {
+    const kind = kindEl.value;
+    const entry = kind === "" ? null : {
+      kind,
+      amountUsd: parseFloat(amountEl.value),
+      stable: form.querySelector(".imb-stable").value,
+      chain: form.querySelector(".imb-chain").value || null,
+    };
+    if (entry && !(entry.amountUsd > 0)) {
+      statusEl.textContent = "amount must be > 0";
+      statusEl.className = "imb-status error";
+      return;
+    }
+    const next = { ...imbalances, [dex.name]: entry };
+    saveBtn.disabled = true;
+    statusEl.textContent = "Saving…";
+    statusEl.className = "imb-status";
+    try {
+      const res = await fetch("/api/imbalances", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `save failed (${res.status})`);
+      imbalances = data.imbalances;
+      imbalanceSummary = data.summary;
+      renderImbalanceSummary();
+      statusEl.textContent = entry ? `Saved — ${kind} $${entry.amountUsd.toFixed(2)}. Press Run solver to re-plan.` : "Saved — balanced. Press Run solver to re-plan.";
+      statusEl.className = "imb-status ok";
+    } catch (e) {
+      statusEl.textContent = e.message;
+      statusEl.className = "imb-status error";
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
 }
 
 function renderDexDetails(dex) {
@@ -1276,19 +1868,22 @@ function renderDexDetails(dex) {
     <dl>
       <dt>DEX</dt><dd>${dex.name}</dd>
       <dt>Real balance (live)</dt><dd id="dexRealBalance"><div class="chip-row"><span class="chip dex-balance-na">Loading…</span></div></dd>
-      <dt>Demo target (mock)</dt><dd class="${sign(dex)}" style="color:var(--${sign(dex)})">${fmtSigned(dex.inbalance)}</dd>
-      <dt>Demo withdrawable (mock)</dt><dd><div class="chip-row">${stableChips}</div></dd>
+      <dt>Solved with</dt><dd class="${sign(dex)}" style="color:var(--${sign(dex)})">${fmtSigned(dex.inbalance)}${Object.keys(dex.withdrawBalances).length ? ` <span class="muted">(${stableChips.replace(/<[^>]+>/g, "")})</span>` : ""}</dd>
       <dt>Supported chains</dt><dd><div class="chip-row">${chainChips}</div></dd>
     </dl>
-    <p class="mock-note">"Demo target"/"Demo withdrawable" feed the solver's
-      demo graph (main._generateMockImbalances) — grounded in the real
-      balance below when one is available, but always haircut by a random
-      keep-fraction, never the real number itself. "Real balance" is a live
-      read straight from ${dex.name}'s own API and never feeds the solver.</p>
+    <h2>Imbalance</h2>
+    ${imbalanceFormHtml(dex)}
+    <p class="mock-note">Surplus = at most this much can be withdrawn from ${dex.name};
+      deficit = exactly this much must be deposited into it. Saved to
+      connectors/dex_imbalances.json — press "Run solver" in the toolbar once
+      every DEX is set. "Solved with" is what the current plan was built on.
+      "Real balance" is a live read of ${dex.name}'s account, shown so you
+      don't declare more surplus than it holds; it never feeds the solver by itself.</p>
     <h2>Paths to other DEXes</h2>
     ${rows}`;
 
   loadDexRealBalance(dex.name);
+  bindImbalanceForm(dex);
 
   document.querySelectorAll(".path-head").forEach(head => {
     head.addEventListener("click", (ev) => {
@@ -1393,6 +1988,19 @@ async function renderWalletDetails(chain) {
     return `<div class="wallet-row"><span class="wallet-label">${r.stable}</span>${value}</div>`;
   }).join("");
 
+  const walletJourneys = GRAPH_DATA.journeys.filter(j => j.fromWallet && j.from === `Wallet ${chain}/${j.stable}`);
+  const journeyBlocks = walletJourneys.map(j => {
+    const jHops = j.hops.map(h => hopHtml(h, true, j.amount)).join("");
+    return `
+      <div class="path-row">
+        <div class="path-head expanded" style="cursor:default">
+          <span style="flex:1">${fmt(j.amount)} ${j.stable} → ${j.to}${j.plausible ? `<span class="approx-tag">approximate</span>` : ""}</span>
+          <span class="cost">${fmt(j.totalCost)} · ${fmtDuration(j.totalTime)}</span>
+        </div>
+        <div class="path-hops expanded">${jHops}</div>
+      </div>`;
+  }).join("");
+
   document.getElementById("details").innerHTML = `
     <h2>Details</h2>
     <dl>
@@ -1401,7 +2009,105 @@ async function renderWalletDetails(chain) {
     </dl>
     <h2>Balance</h2>
     ${rowsHtml}
-    <div class="wallet-total"><span>Total</span><span>$${fmt(total)}</span></div>`;
+    <div class="wallet-total"><span>Total</span><span>$${fmt(total)}</span></div>
+    <h2>Solver source</h2>
+    ${walletSourcesFormHtml(chain, rows)}
+    ${walletJourneys.length ? `<h2>Chosen by the solver from this wallet</h2>${journeyBlocks}` : ""}`;
+
+  bindWalletSourcesForm(chain);
+  bindTestEdgeButtons();
+  bindExecuteButtons();
+}
+
+// Réglages connectors/wallet_sources.json (GET/POST /api/wallet-sources),
+// une ligne par stable de ce wallet : "use" (le solveur peut puiser ici) et
+// un plafond optionnel. GRAPH_DATA.walletNodes donne ce que le graphe
+// COURANT a effectivement offert au solveur (voir WalletNode.balance).
+let walletSources = null;
+async function getWalletSources() {
+  if (walletSources) return walletSources;
+  try {
+    const res = await fetch("/api/wallet-sources");
+    walletSources = res.ok ? await res.json() : {};
+  } catch (e) {
+    walletSources = {};
+  }
+  return walletSources;
+}
+
+function solvedWalletBalance(chain, stable) {
+  const n = (GRAPH_DATA.walletNodes || []).find(w => w.chain === chain && w.stable === stable);
+  return n ? n.balance : 0;
+}
+
+function walletSourcesFormHtml(chain, rows) {
+  const stables = rows.map(r => r.stable);
+  const cells = stables.map(stable => {
+    const key = `${chain}/${stable}`;
+    const cur = (walletSources || {})[key] || {};
+    const enabled = cur.enabled !== false;
+    const override = cur.overrideUsd === null || cur.overrideUsd === undefined ? "" : cur.overrideUsd;
+    return `
+      <label><input type="checkbox" class="ws-enabled" data-key="${key}" ${enabled ? "checked" : ""}> ${stable}</label>
+      <span class="ws-solved">solved with <b>$${fmt(solvedWalletBalance(chain, stable))}</b></span>
+      <input type="number" class="ws-override" data-key="${key}" min="0" step="0.01" placeholder="cap (blank = live balance)" value="${override}" ${enabled ? "" : "disabled"}>`;
+  }).join("");
+  return `
+    <div class="ws-form" data-chain="${chain}">
+      <span class="ws-head">use</span><span class="ws-head">in current plan</span><span class="ws-head">cap (USD)</span>
+      ${cells}
+    </div>
+    <div class="imb-actions">
+      <button class="imb-save-btn ws-save-btn" type="button">Save wallet settings</button>
+      <span class="imb-status ws-status"></span>
+    </div>`;
+}
+
+async function bindWalletSourcesForm(chain) {
+  await getWalletSources();
+  const form = document.querySelector(`.ws-form[data-chain="${CSS.escape(chain)}"]`);
+  if (!form) return;
+  // Re-render the cells now that the settings are known (first paint may
+  // have happened before the fetch resolved).
+  const stables = [...form.querySelectorAll(".ws-enabled")].map(el => el.dataset.key.split("/")[1]);
+  form.outerHTML = walletSourcesFormHtml(chain, stables.map(stable => ({ stable }))).split('<div class="imb-actions">')[0];
+  const form2 = document.querySelector(`.ws-form[data-chain="${CSS.escape(chain)}"]`);
+  const saveBtn = document.querySelector(".ws-save-btn");
+  const statusEl = document.querySelector(".ws-status");
+  if (!form2 || !saveBtn) return;
+
+  form2.querySelectorAll(".ws-enabled").forEach(cb => {
+    cb.addEventListener("change", () => {
+      form2.querySelector(`.ws-override[data-key="${CSS.escape(cb.dataset.key)}"]`).disabled = !cb.checked;
+    });
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    const next = { ...(walletSources || {}) };
+    form2.querySelectorAll(".ws-enabled").forEach(cb => {
+      const raw = form2.querySelector(`.ws-override[data-key="${CSS.escape(cb.dataset.key)}"]`).value;
+      const override = raw === "" ? null : parseFloat(raw);
+      next[cb.dataset.key] = { enabled: cb.checked, overrideUsd: Number.isFinite(override) ? override : null };
+    });
+    saveBtn.disabled = true;
+    statusEl.textContent = "Saving…";
+    statusEl.className = "imb-status ws-status";
+    try {
+      const res = await fetch("/api/wallet-sources", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `save failed (${res.status})`);
+      walletSources = data;
+      statusEl.textContent = "Saved. Press Run solver to re-plan.";
+      statusEl.className = "imb-status ws-status ok";
+    } catch (e) {
+      statusEl.textContent = e.message;
+      statusEl.className = "imb-status ws-status error";
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
 }
 
 function selectEdge(e, journeys) {
@@ -1431,7 +2137,7 @@ function renderEdgeDetails(e, journeys) {
     const totalAmount = journeys.reduce((s, j) => s + j.amount, 0);
     const anyApprox = journeys.some(j => j.plausible);
     const journeyBlocks = journeys.map(j => {
-      const jHops = j.hops.map(h => hopHtml(h, true)).join("") || `<div class="hop">direct — no intermediate hop</div>`;
+      const jHops = j.hops.map(h => hopHtml(h, true, j.amount)).join("") || `<div class="hop">direct — no intermediate hop</div>`;
       return `
         <div class="path-row">
           <div class="path-head expanded" style="cursor:default">
@@ -1458,6 +2164,7 @@ function renderEdgeDetails(e, journeys) {
     ${journeySection}`;
 
   bindTestEdgeButtons();
+  bindExecuteButtons();
 }
 
 // Reconstruit tout le graphe from scratch côté serveur (nouveaux
@@ -1468,18 +2175,25 @@ const recomputeBtn = document.getElementById("recomputeBtn");
 const recomputeStatusEl = document.getElementById("recomputeStatus");
 recomputeBtn.addEventListener("click", async () => {
   recomputeBtn.disabled = true;
-  recomputeStatusEl.textContent = "Recomputing… (rebuilding demo imbalances, a few seconds)";
+  recomputeStatusEl.textContent = "Solving from the saved imbalances… (a few seconds)";
   recomputeStatusEl.className = "status-note saving";
   try {
     const res = await fetch("/api/recompute", { method: "POST" });
-    if (!res.ok) throw new Error("recompute failed");
+    if (!res.ok) {
+      let msg = `solve failed (${res.status})`;
+      try { msg = (await res.json()).error || msg; } catch (e2) { /* keep default */ }
+      throw new Error(msg);
+    }
     window.location.reload();
   } catch (e) {
-    recomputeStatusEl.textContent = "Not connected to the solve server — can't recompute. Serve this page with `python -m visualization.server`.";
+    recomputeStatusEl.textContent = e.message.startsWith("Failed to fetch")
+      ? "Not connected to the solve server — can't run the solver. Serve this page with `python -m visualization.server`."
+      : `Can't solve: ${e.message}`;
     recomputeStatusEl.className = "status-note offline";
     recomputeBtn.disabled = false;
   }
 });
+initImbalances();
 
 svg.addEventListener("click", clearSelection);
 
@@ -1650,7 +2364,7 @@ function renderOperations() {
 
   if (!opsSummaryData) {
     opsSummary.innerHTML = "";
-    opsList.innerHTML = `<div class="ops-empty">No rebalancing operations chosen by the solver — every DEX balance is currently zero (target/balance data isn't wired in yet).</div>`;
+    opsList.innerHTML = `<div class="ops-empty">No rebalancing operations — no DEX has a deficit to fill. Click a DEX, set a surplus or a deficit, then press "Run solver".</div>`;
     return;
   }
 
@@ -1667,7 +2381,10 @@ function renderOperations() {
       <span class="op-amount">${fmt(o.amount)}</span>
       <span class="op-cost">${fmt(o.cost)}</span>
       <span class="op-delay">${o.time ? o.time.toFixed(0) + "s" : "–"}</span>
+      <span class="op-exec">${o.testable ? executeButtonHtml(o.testable, o.amount) : ""}</span>
+      ${o.testable ? `<div class="op-exec-result"><div class="hop-test-result"></div></div>` : ""}
     </div>`).join("");
+  bindExecuteButtons();
 }
 renderOperations();
 
@@ -1720,6 +2437,39 @@ function saveStoredConfig(config) {
 const dexConfig = {};
 let configServerAvailable = true;
 
+// Délais MESURÉS par compass_test (moyenne des derniers runs live, voir
+// compass_test/calibration.py) : measuredDelays[dexName][chainName] =
+// {withdrawDelaySeconds: {meanSeconds, n, stdSeconds, ...}|null,
+//  depositDelaySeconds: ...}. Pré-rempli depuis GRAPH_DATA (valeurs au
+// moment du build du graphe, seule source hors serveur), rafraîchi via
+// GET /api/measured-delays quand le serveur répond (un run live lancé
+// depuis "Test This Edge" reconstruit le fichier sans rebuild du graphe).
+const MEASURED_FIELDS = ["withdrawDelaySeconds", "depositDelaySeconds"];
+const measuredDelays = {};
+for (const dex of GRAPH_DATA.dexNodes) {
+  measuredDelays[dex.name] = dex.measuredDelays || {};
+}
+
+async function refreshMeasuredDelays() {
+  try {
+    const res = await fetch("/api/measured-delays");
+    if (!res.ok) return;
+    const fromServer = await res.json();
+    for (const dexName of Object.keys(measuredDelays)) {
+      const chains = fromServer[dexName] || {};
+      for (const chain of Object.keys(measuredDelays[dexName])) {
+        const entry = chains[chain] || {};
+        measuredDelays[dexName][chain] = {
+          withdrawDelaySeconds: entry.withdrawDelaySeconds || null,
+          depositDelaySeconds: entry.depositDelaySeconds || null,
+        };
+      }
+    }
+  } catch (e) {
+    // Pas de serveur : on garde les valeurs embarquées dans GRAPH_DATA.
+  }
+}
+
 function buildDexConfig(overrides) {
   for (const dex of GRAPH_DATA.dexNodes) {
     dexConfig[dex.name] = {};
@@ -1739,6 +2489,7 @@ function setConfigStatus(text, cssClass) {
 }
 
 async function initDexConfig() {
+  await refreshMeasuredDelays();
   try {
     const res = await fetch("/api/config");
     if (!res.ok) throw new Error("bad response");
@@ -1788,9 +2539,20 @@ function renderConfig() {
   for (const dex of dexes) {
     for (const chain of dex.chains) {
       const c = dexConfig[dex.name][chain];
-      const cells = CONFIG_FIELDS.map(field =>
-        `<td><input type="number" step="any" data-field="${field}" value="${c[field]}"></td>`
-      ).join("");
+      const measuredChain = (measuredDelays[dex.name] || {})[chain] || {};
+      const cells = CONFIG_FIELDS.map(field => {
+        const m = MEASURED_FIELDS.includes(field) ? measuredChain[field] : null;
+        if (!m) {
+          const note = MEASURED_FIELDS.includes(field)
+            ? `<div class="cfg-measured">no live run yet · config in effect</div>`
+            : "";
+          return `<td class="${MEASURED_FIELDS.includes(field) ? "cfg-delay" : ""}"><input type="number" step="any" data-field="${field}" value="${c[field]}">${note}</td>`;
+        }
+        const std = m.n >= 2 ? ` ±${m.stdSeconds.toFixed(1)}s` : "";
+        const nClass = m.n < 3 ? " cfg-measured-lown" : "";
+        return `<td class="cfg-delay"><input type="number" step="any" data-field="${field}" value="${c[field]}" class="cfg-overridden" title="Overridden by the measured mean below (see connectors/dex_measured_delays.json)">` +
+          `<div class="cfg-measured"><span class="cfg-measured-active">measured ${m.meanSeconds.toFixed(1)}s</span>${std} · <span class="${nClass}">n=${m.n}</span></div></td>`;
+      }).join("");
       rows.push(
         `<tr data-dex="${dex.name}" data-chain="${chain}"><td class="cfg-name">${dex.name}</td><td class="cfg-chain">${chain}</td>${cells}</tr>`
       );
@@ -1848,17 +2610,29 @@ async function fetchTestRun(runId) {
   return res.json();
 }
 
+// Un temps estimé "(m)" vient de la moyenne mesurée des derniers runs live
+// (PlannedHop.timeSource === "measured"), pas de la config saisie à la
+// main : le tooltip garde la valeur configurée pour voir de combien le
+// frontend du DEX se trompait.
+function estTimeTitle(p) {
+  if (p.timeSource === "measured") {
+    const cfg = p.configuredTimeSeconds === null || p.configuredTimeSeconds === undefined ? "n/a" : `${p.configuredTimeSeconds.toFixed(0)}s`;
+    return `measured mean of recent live runs (configured value: ${cfg})`;
+  }
+  return "configured value (no live run measured yet)";
+}
+
 function hopRowHtml(hc) {
   const p = hc.planned, e = hc.executed;
   const statusClass = e.status !== "ok" ? `results-status-${e.status}` : "";
   return `<tr>
-    <td>${p.hopType}</td>
+    <td>${p.hopType}${p.toStable ? ` <span class="muted">${p.stable}→${p.toStable}</span>` : ""}</td>
     <td>${p.dex}</td>
     <td>${p.chain}</td>
     <td>${fmtUsd4(p.estimatedCostUsd)}</td>
     <td>${fmtUsd4(e.actualCostUsd)}</td>
     <td class="${resultsErrClass(hc.costErrorPct)}">${fmtPct(hc.costErrorPct)}</td>
-    <td>${p.estimatedTimeSeconds.toFixed(0)}s</td>
+    <td title="${estTimeTitle(p)}">${p.estimatedTimeSeconds.toFixed(0)}s${p.timeSource === "measured" ? " <span class=\"muted\">(m)</span>" : ""}</td>
     <td>${e.actualTimeSeconds.toFixed(0)}s</td>
     <td class="${resultsErrClass(hc.timeErrorPct)}">${fmtPct(hc.timeErrorPct)}</td>
     <td class="${statusClass}">${e.status}</td>

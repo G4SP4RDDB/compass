@@ -80,6 +80,12 @@ python -m compass_test.cli run --from Aster --to MEXC --amount 5
 # Dry-run ONE hop directly, independent of the solver's current journeys
 python -m compass_test.cli run-hop --dex MEXC  --hop withdraw --chain ARBITRUM --stable USDT --amount 1
 python -m compass_test.cli run-hop --dex Aster --hop deposit  --chain BSC       --stable USDT --amount 1
+
+# Dry-run a same-chain USDC<->USDT swap through CoW Swap (no --dex — a swap
+# has no DEX). "actual" here is a REAL orderbook quote: what would leave the
+# wallet minus what it would get back, fee and price impact included.
+python -m compass_test.cli run-hop --hop swap --chain ARBITRUM --stable USDC --to-stable USDT --amount 1
+python -m compass_test.cli run-hop --hop swap --chain BSC      --stable USDT --to-stable USDC --amount 1
 ```
 
 Each dry run writes a report (path printed at the end,

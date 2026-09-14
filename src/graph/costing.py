@@ -1,12 +1,13 @@
 from typing import cast
 
-from connectors import chain_block_times
+from connectors import chain_block_times, dex_measured_delays
 from connectors.alchemy import AlchemyConnector
 from connectors.gas import GasFeeService, GasOperation
 from connectors.stable_tokens import get_stable_decimals, get_stable_token_address
 from graph.edge import Edge, EdgeType
 from graph.node import DepositNode, NodeType, SourceNode, WalletNode, WithdrawNode
 from graph.structures.bridges import adenBridgeFeeUsd
+from graph.structures.DEXes import MeasuredDelay
 from graph.urgency import TimeWeightParams, computeTimeWeight
 
 # Pas de simulation réelle du bridge interne d'Aden (voir BridgeProtocol,
@@ -170,7 +171,57 @@ def computeTimeWeightedCost(fee: float, edgeTime: float, sigmaD: float, params: 
     return fee + computeTimeWeight(sigmaD, params) * edgeTime
 
 
+DELAY_SOURCE_MEASURED = "measured"
+DELAY_SOURCE_CONFIGURED = "configured"
+
+
+def measuredDelay(edge: Edge) -> MeasuredDelay | None:
+    """La mesure compass_test qui s'applique à cette edge, s'il y en a une
+    (voir DEX.measuredWithdrawDelayByChain / measuredDepositDelayByChain et
+    connectors.dex_measured_delays) : Withdraw -> WalletNode, ou dépôt DIRECT
+    WalletNode -> SourceNode. None pour toute autre edge, y compris le dépôt
+    en deux étapes (DepositNode -> SourceNode, DEX.requiresDepositAddress) :
+    la mesure couvre le virement on-chain ET le crédit, elle ne se découpe
+    pas sur deux hops -- aucun DEX du registre n'utilise cette forme."""
+    if edge.u.type == NodeType.Withdraw:
+        withdrawNode = cast(WithdrawNode, edge.u)
+        return withdrawNode.dex.measuredWithdrawDelayByChain.get(cast(WalletNode, edge.v).chain)
+    if edge.v.type == NodeType.SourceNode and edge.u.type == NodeType.Wallet:
+        dex = cast(SourceNode, edge.v).dex
+        return dex.measuredDepositDelayByChain.get(cast(WalletNode, edge.u).chain)
+    if edge.type == EdgeType.Swap:
+        # Swap CoW mesuré par compass_test (ordre posté -> rempli, voir
+        # compass_test/executor.py::_run_swap) : une enchère par lots, pas
+        # une simple tx -- typiquement bien plus que le block delay que
+        # computeConfiguredDelay suppose. Par chain, pas par DEX (aucun
+        # DEX derrière un swap), voir connectors.dex_measured_delays.
+        return dex_measured_delays.measured_swap_delay(cast(WalletNode, edge.u).chain)
+    return None
+
+
+def delaySource(edge: Edge) -> str:
+    return DELAY_SOURCE_MEASURED if measuredDelay(edge) is not None else DELAY_SOURCE_CONFIGURED
+
+
 def computeDelay(edge: Edge) -> float:
+    """Time(e). Un délai MESURÉ (moyenne des derniers runs live compass_test,
+    voir measuredDelay) prime dès qu'il existe ; sinon la formule configurée
+    (computeConfiguredDelay). Pour un dépôt direct, la mesure va du début de
+    la construction de la tx jusqu'au crédit constaté sur le compte DEX :
+    elle contient DÉJÀ la confirmation on-chain, on ne rajoute donc pas le
+    block delay par-dessus. Même chose pour un swap : la mesure couvre
+    l'ordre CoW de sa soumission à son règlement on-chain."""
+    measured = measuredDelay(edge)
+    if measured is not None:
+        return measured.meanSeconds
+    return computeConfiguredDelay(edge)
+
+
+def computeConfiguredDelay(edge: Edge) -> float:
+    """Time(e) tel que configuré à la main (panel Config / DEFAULT_*), en
+    ignorant toute mesure -- ce que computeDelay renvoyait avant l'existence
+    des délais mesurés. Gardé exposé pour l'affichage côte à côte
+    (compass_test PlannedHop.configuredTimeSeconds, panel Config)."""
     if edge.u.type == NodeType.Withdraw:
         # Délai de traitement du retrait CEX avant que les fonds soient
         # mobilisables ailleurs (même edge que dans computeCost ci-dessus,

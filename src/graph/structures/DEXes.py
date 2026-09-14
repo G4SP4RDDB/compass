@@ -1,9 +1,50 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Sequence
 from enum import Enum,auto
 
 from graph.structures.positions import Position
+
+
+@dataclass
+class MeasuredDelay:
+    """Délai RÉELLEMENT observé pour un (DEX, chain, withdraw|deposit),
+    agrégé sur les derniers runs live réussis de compass_test (voir
+    compass_test/calibration.py, qui produit connectors/dex_measured_delays.json,
+    et connectors.dex_measured_delays qui le recharge sur le DEX). Une
+    entrée n'existe que si au moins UN run live a réussi : absent ->
+    costing.computeDelay retombe sur la valeur configurée/DEFAULT_*.
+
+    samplesSeconds : les délais individuels retenus (au plus
+    connectors.dex_measured_delays.MAX_SAMPLES, les plus récents), du plus
+    ancien au plus récent. meanSeconds en est la moyenne arithmétique --
+    c'est LA valeur consommée par le solveur. Les autres champs sont
+    informatifs (UI, CLI), jamais lus par costing."""
+
+    meanSeconds: float
+    samplesSeconds: list[float] = field(default_factory=list)
+    sampleRunIds: list[str] = field(default_factory=list)
+    lastMeasuredAt: float | None = None
+
+    @property
+    def n(self) -> int:
+        return len(self.samplesSeconds)
+
+    @property
+    def stdSeconds(self) -> float:
+        if self.n < 2:
+            return 0.0
+        mean = sum(self.samplesSeconds) / self.n
+        return (sum((x - mean) ** 2 for x in self.samplesSeconds) / (self.n - 1)) ** 0.5
+
+    @property
+    def minSeconds(self) -> float:
+        return min(self.samplesSeconds) if self.samplesSeconds else self.meanSeconds
+
+    @property
+    def maxSeconds(self) -> float:
+        return max(self.samplesSeconds) if self.samplesSeconds else self.meanSeconds
 
 # Valeurs de départ placeholder tant qu'aucune donnée réelle par DEX n'est
 # saisie (via le panel "Config" du frontend ou connectors/dex_operational_params.json) :
@@ -21,8 +62,8 @@ DEFAULT_DEPOSIT_DELAY_SECONDS = 60.0
 # compass_test uses for a dry/live test of this DEX's Withdraw edge (see
 # compass_test/plan_loader.py) — a realistic exchange-account-sized amount,
 # not the solver's flow on a deficit DEX's edge, which is still an
-# ungrounded mock (no real TARGET data, see main._generateMockImbalances /
-# connectors/zfund.py) and can be far larger than any real balance.
+# whatever the user typed in the Imbalance form (connectors.dex_imbalances)
+# and can be far larger than any real balance.
 DEFAULT_MIN_WITHDRAW_USD = 5.0
 # Mirror of DEFAULT_MIN_WITHDRAW_USD for the crediting side: smallest amount
 # this DEX will actually credit a deposit for, PER CHAIN. Defaults to 0.0
@@ -109,6 +150,17 @@ class DEX:
         }
         self.minWithdrawUsdByChain: dict[Chain, float] = {chain: DEFAULT_MIN_WITHDRAW_USD for chain in supportedChains}
         self.minDepositUsdByChain: dict[Chain, float] = {chain: DEFAULT_MIN_DEPOSIT_USD for chain in supportedChains}
+        # Délais MESURÉS (voir MeasuredDelay ci-dessus) : seulement les chains
+        # pour lesquelles au moins un run live de compass_test a réussi --
+        # contrairement aux dicts *DelaySecondsByChain ci-dessus, PAS une
+        # entrée par chain supportée. Quand une entrée existe, elle PRIME
+        # sur withdrawDelaySecondsByChain / depositDelaySecondsByChain dans
+        # costing.computeDelay ; la valeur configurée reste intacte (toujours
+        # éditable dans le panel Config, affichée à côté de la mesure) et
+        # redevient effective dès que la mesure disparaît. Rempli par
+        # connectors.dex_measured_delays.apply_measured_delays.
+        self.measuredWithdrawDelayByChain: dict[Chain, MeasuredDelay] = {}
+        self.measuredDepositDelayByChain: dict[Chain, MeasuredDelay] = {}
 
     def update_target(self,newTarget: float) -> None:
         self.target = newTarget

@@ -5,11 +5,12 @@ import json
 from pathlib import Path
 from typing import Any, Callable, cast
 
+from connectors.cowswap import COWSWAP_VENUE_NAME
 from graph.edge import Edge, EdgeType
 from graph.graph import Graph
 from graph.node import DepositNode, Node, NodeType, SourceNode, WalletNode, WithdrawNode
 from graph.structures.bridges import BridgeProtocol
-from graph.structures.DEXes import DEX
+from graph.structures.DEXes import Chain, DEX, MeasuredDelay
 from graph.urgency import TimeWeightParams
 from visualization.dex_branding import DEX_BRANDING
 from visualization.journeys import Journey, decomposeJourneys
@@ -87,12 +88,15 @@ _BRIDGE_PROTOCOL_LABEL: dict[BridgeProtocol, str] = {
 
 
 def _testableHopInfo(edge: Edge) -> dict[str, str] | None:
-    """(dex, chain, stable, hopType) for a Withdraw/Deposit edge, structured
-    for the frontend's "Test This Edge" button — POST /api/test-hop (see
+    """(dex, chain, stable, hopType) for a Withdraw/Deposit edge, plus
+    `toStable` (and the venue name as `dex`) for a Swap edge, structured for
+    the frontend's "Test This Edge" button — POST /api/test-hop (see
     visualization/server.py) takes exactly these strings, no parsing of the
     human-readable `from`/`to` labels required. None for any other hop kind
-    (Swap/Bridge/On-chain transfer), which compass_test does not test (see
-    compass_test/plan_loader.py — same restriction, same reason).
+    (Bridge/On-chain transfer), which compass_test does not test (see
+    compass_test/plan_loader.py — same restriction, same reason). A Swap is
+    only testable on the chains compass_test wires CoW Swap for (BSC,
+    Arbitrum — compass_test/runners/cowswap.py); elsewhere it's None too.
 
     Deliberately duplicates compass_test/plan_loader.py's
     _planned_hop_from_edge logic (same Edge model) rather than importing
@@ -116,7 +120,24 @@ def _testableHopInfo(edge: Edge) -> dict[str, str] | None:
             "stable": walletNode.stable.name,
             "hopType": "Deposit",
         }
+    if edge.type == EdgeType.Swap:
+        walletIn, walletOut = cast(WalletNode, edge.u), cast(WalletNode, edge.v)
+        if walletIn.chain not in _SWAP_TESTABLE_CHAINS:
+            return None
+        return {
+            "dex": COWSWAP_VENUE_NAME,
+            "chain": walletIn.chain.name,
+            "stable": walletIn.stable.name,
+            "toStable": walletOut.stable.name,
+            "hopType": "Swap",
+        }
     return None
+
+
+# Mirror of compass_test/runners/cowswap.py::SUPPORTED_CHAINS — duplicated
+# for the same reason _testableHopInfo duplicates plan_loader's logic (no
+# compass_test import from a module loaded on every render).
+_SWAP_TESTABLE_CHAINS = frozenset({Chain.BSC, Chain.ARBITRUM})
 
 
 def _buildHopList(edges: list[Edge]) -> list[dict[str, Any]]:
@@ -253,6 +274,10 @@ def _dexNodeDict(dex: DEX, sourceNodeId: int) -> dict[str, Any]:
         # affiché dans le panel "Details" (voir renderDexDetails côté frontend)
         # pour expliquer pourquoi certaines routes de retrait sont absentes.
         "withdrawChainByStable": {s.name: c.name for s, c in dex.withdrawChainByStable.items()},
+        # Le formulaire "Imbalance" du panel Details (voir
+        # connectors.dex_imbalances) doit exiger une chain pour un surplus
+        # sur un tel DEX (le retrait est lié à la chain de dépôt).
+        "requiresSameChainWithdraw": dex.requiresSameChainWithdraw,
         "logo": branding.get("logo"),
         "brandColor": branding.get("color"),
         # Pré-remplit le panel "Config" du frontend avec les valeurs déjà
@@ -270,6 +295,32 @@ def _dexNodeDict(dex: DEX, sourceNodeId: int) -> dict[str, Any]:
             }
             for chain in dex.chains
         },
+        # Délais MESURÉS par compass_test (voir DEX.measuredWithdrawDelayByChain
+        # et connectors.dex_measured_delays) : affichés en lecture seule à
+        # côté des délais configurés dans le panel Config, avec n/std pour
+        # juger la confiance. Une entrée par chain supportée ; withdraw/
+        # deposit valent null tant qu'aucun run live n'a réussi (la config
+        # reste alors effective, voir costing.computeDelay).
+        "measuredDelays": {
+            chain.name: {
+                "withdrawDelaySeconds": _measuredDelayDict(dex.measuredWithdrawDelayByChain.get(chain)),
+                "depositDelaySeconds": _measuredDelayDict(dex.measuredDepositDelayByChain.get(chain)),
+            }
+            for chain in dex.chains
+        },
+    }
+
+
+def _measuredDelayDict(measured: MeasuredDelay | None) -> dict[str, Any] | None:
+    if measured is None:
+        return None
+    return {
+        "meanSeconds": measured.meanSeconds,
+        "n": measured.n,
+        "stdSeconds": measured.stdSeconds,
+        "minSeconds": measured.minSeconds,
+        "maxSeconds": measured.maxSeconds,
+        "lastMeasuredAt": measured.lastMeasuredAt,
     }
 
 
@@ -366,6 +417,11 @@ def computeChosenOperations(graph: Graph) -> list[dict[str, Any]]:
             "time": edge.time or 0.0,
             "type": _hopKind(edge),
             "protocol": _BRIDGE_PROTOCOL_LABEL.get(edge.bridgeProtocol) if edge.bridgeProtocol else None,
+            # Bouton "Execute" de l'onglet Chosen Operations : exécution
+            # LIVE de ce hop précis, au montant `amount` choisi par le
+            # solveur (POST /api/test-hop, voir graph_template.html). null
+            # pour Swap/Bridge, que compass_test n'exécute pas.
+            "testable": _testableHopInfo(edge),
         }
         for edge in graph.edgeList
         if edge.flow and edge.flow > 1e-9 and not _isInternalHop(edge)
@@ -388,6 +444,11 @@ def _journeyDict(journey: Journey) -> dict[str, Any]:
         "amount": journey.amount,
         "stable": journey.stable,
         "plausible": journey.plausible,
+        # Trajet qui part de l'argent déjà présent sur l'operating wallet
+        # (voir Journey.fromWallet) : `from` est alors "Wallet CHAIN/STABLE",
+        # pas un DEX -- affiché dans le panel Details du nœud Wallet, jamais
+        # sur une arête DEX -> DEX.
+        "fromWallet": journey.fromWallet,
         "totalCost": sum(_edgeCost(edge) for edge in visibleHops),
         # Somme des délais des hops traversés séquentiellement le long de ce
         # trajet (voir la même remarque dans _computeDexPaths).
@@ -411,6 +472,15 @@ def graphToDict(graph: Graph, timeWeightParams: TimeWeightParams | None = None) 
         avec un time-weighting (pas de timeWeightParams fourni)."""
     dexNodes, paths = _computeDexPaths(graph)
     journeys = [_journeyDict(j) for j in decomposeJourneys(graph)]
+    # Solde de l'operating wallet que CE graphe a offert au solveur, par
+    # (chain, stable) (voir WalletNode.balance) -- affiché dans le panel
+    # Details d'un nœud Wallet à côté du solde live et des réglages
+    # connectors/wallet_sources.json.
+    walletNodes = [
+        {"chain": cast(WalletNode, n).chain.name, "stable": cast(WalletNode, n).stable.name, "balance": cast(WalletNode, n).balance}
+        for n in graph.nodeList
+        if n.type == NodeType.Wallet
+    ]
     timeWeight = (
         {
             "lambdaMin": timeWeightParams.lambda_min,
@@ -427,6 +497,7 @@ def graphToDict(graph: Graph, timeWeightParams: TimeWeightParams | None = None) 
         "operations": computeChosenOperations(graph),
         "journeys": journeys,
         "timeWeight": timeWeight,
+        "walletNodes": walletNodes,
     }
 
 
@@ -454,8 +525,8 @@ def formatOperationsText(graph: Graph) -> str:
     operations = computeChosenOperations(graph)
     if not operations:
         return (
-            "No rebalancing operations chosen by the solver — every DEX balance "
-            "is currently zero (target/balance data isn't wired in yet).\n"
+            "No rebalancing operations — no DEX has a deficit to fill "
+            "(set imbalances in the graph UI, then Run solver).\n"
         )
 
     totalAmount = sum(op["amount"] for op in operations)

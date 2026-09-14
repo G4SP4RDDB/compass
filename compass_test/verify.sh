@@ -53,6 +53,9 @@ _check env PYTHONPATH=src "$PY" -m compass_test.cli run-hop --dex Aster     --ho
 _check env PYTHONPATH=src "$PY" -m compass_test.cli run-hop --dex Aster     --hop deposit  --chain BSC       --stable USDT --amount 1
 _check env PYTHONPATH=src "$PY" -m compass_test.cli run-hop --dex MEXC     --hop withdraw --chain BSC       --stable USDT --amount 1
 _check env PYTHONPATH=src "$PY" -m compass_test.cli run-hop --dex MEXC     --hop deposit  --chain BSC       --stable USDT --amount 1
+# Swap (CoW Swap, no --dex): a real orderbook quote, nothing signed
+_check env PYTHONPATH=src "$PY" -m compass_test.cli run-hop --hop swap --chain ARBITRUM --stable USDC --to-stable USDT --amount 1
+_check env PYTHONPATH=src "$PY" -m compass_test.cli run-hop --hop swap --chain BSC      --stable USDT --to-stable USDC --amount 1
 
 _step "5. End-to-end journey dry runs (both hops of an actual in-scope route)"
 _check env PYTHONPATH=src "$PY" -m compass_test.cli run --from Aster    --to MEXC

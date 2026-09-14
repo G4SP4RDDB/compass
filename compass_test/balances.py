@@ -5,7 +5,7 @@ never zfund/sentinel at runtime, never cached:
     stablecoin (USDT/USDC — most of these DEXes only ever hold one, see each
     reader's docstring): each DEX's own API, using the credentials already
     in piggybank-arb/.env. get_real_balance_usd is a back-compat shim
-    summing the two into one USD figure, for src/main.py's demo-imbalance
+    summing the two into one USD figure, for the graph UI's DEX Details panel and the old demo-imbalance
     generator.
   - The operating wallet's own on-chain holdings (get_wallet_balance_usd/
     list_wallet_balances): a plain ERC-20 balanceOf on Arbitrum/BSC, USDC/
@@ -267,7 +267,7 @@ def list_all_balances(dex_names: list[str]) -> list[DexBalanceResult]:
 
 def get_real_balance_usd(dex_name: str) -> "BalanceResultUsd":
     """Back-compat shim for callers that only want one combined USD figure
-    (src/main.py's demo-imbalance generator — stablecoins are treated as
+    (the graph UI's "Real balance" chip — stablecoins are treated as
     dollar-par there, same as everywhere else in this codebase) — sums
     `get_real_balance(dex_name).balances` across USDT+USDC rather than
     tracking its own separate reader."""

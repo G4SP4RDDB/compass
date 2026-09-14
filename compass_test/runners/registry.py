@@ -20,8 +20,9 @@ _CONNECTOR_CLASSES: dict[str, type[DexConnector]] = {
     "Aster": AsterConnector,
     "Aden": AdenConnector,
     "Hyperliquid": HyperliquidConnector,
-    # Withdraw only (fast path) — build_deposit_tx raises, see
-    # runners/lighter.py's own docstring for why.
+    # Fast withdraw + fast (CCTP) deposit only — see runners/lighter.py's
+    # own docstring for why the "secure" withdraw and other deposit paths
+    # aren't implemented.
     "Lighter": LighterConnector,
     # Withdraw only (bridged via Rhino.fi) — build_deposit_tx raises, see
     # runners/extended.py's own docstring for why.

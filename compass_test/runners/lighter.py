@@ -1,6 +1,7 @@
-"""Lighter — FAST withdrawal only (USDC, Arbitrum), by explicit instruction.
-Deposit and the "secure" (on-chain contract) withdrawal path are NOT
-implemented here — see build_deposit_tx below.
+"""Lighter — FAST withdrawal and FAST deposit only (USDC, Arbitrum), by
+explicit instruction. The "secure" (on-chain contract) withdrawal path and
+the slow direct-Ethereum-mainnet / UDA deposit paths are NOT implemented
+here — see build_deposit_tx below.
 
 Signs via the same compiled Go signer binary the `lighter-sdk` PyPI package
 vendors internally (see runners/lighter_signers/README.md) — loaded
@@ -21,6 +22,28 @@ hardcoded. SignTransfer also returns a `messageToSign` string that needs a
 SEPARATE plain personal_sign (EIP-191) from the account's own Ethereum
 wallet, injected into the signed tx_info as `L1Sig` before submission —
 ported from signer_client.py's __decode_and_sign_tx_info.
+
+A "fast deposit" is Lighter's CCTP-bridge intent-address flow (Circle's
+Cross-Chain Transfer Protocol), documented at
+apidocs.lighter.xyz/docs/deposits-transfers-and-withdrawals as the "Legacy
+CCTP Method" — chosen over that same page's two other deposit paths because
+neither fits here: the "Direct Ethereum Mainnet Deposit" contract call only
+exists on Ethereum mainnet (this connector is Arbitrum-only, see
+supported_chains), and the newer "Universal Deposit Address" bridge
+(bridge.lighter.xyz) requires a separate `x-api-key` requested over Discord
+that we don't have. The CCTP path needs no auth at all: POST
+/api/v1/createIntentAddress with {chain_id, from_addr, amount} returns a
+per-(chain, sender) `intent_address` (confirmed live 2026-09-14 — same
+address on repeat calls); a plain ERC-20 USDC transfer from `from_addr` to
+that address is watched and bridged in, crediting the Lighter account within
+minutes (no on-chain contract call, no L2 signature needed for the deposit
+itself — only the withdraw path above touches the Go signer). `chain_id` is
+Arbitrum's own real EVM chain id (42161, confirmed against GET
+/api/v1/deposit/networks), unlike the withdraw path's Lighter-internal app-
+chain id below. Minimum is 5 USDC (same page, verbatim); GET
+/api/v1/fastbridge/info's `fast_bridge_limit` is unrelated — it returned "0"
+live regardless of account, and turned out to describe a different, currently-
+inactive fast-bridge product, not this CCTP flow's per-tx cap.
 
 Credentials (all already in piggybank-arb/.env, used for trading there):
 LIGHTER_ACCOUNT_INDEX, LIGHTER_API_KEY_INDEX, LIGHTER_API_KEY (Lighter's own
@@ -47,9 +70,10 @@ from eth_account import Account
 from eth_account.messages import encode_defunct
 from web3 import Web3
 
+from connectors.chain_metadata import get_metadata
 from graph.structures.DEXes import Chain, Stable
 
-from .. import config
+from .. import chain_ops, config
 from .base import DexConnector, WithdrawResult
 
 _BASE_URL = "https://mainnet.zklighter.elliot.ai"
@@ -57,6 +81,7 @@ _CHAIN_ID = 304  # Lighter app-chain mainnet (300 = testnet) — NOT Arbitrum's 
 _ROUTE_PERP = 0
 _ASSET_ID_USDC = 3
 _USDC_SCALE = 10**6
+_MIN_DEPOSIT_USD = 5.0  # CCTP path minimum, apidocs.lighter.xyz/docs/deposits-transfers-and-withdrawals
 _SIGNERS_DIR = Path(__file__).resolve().parent / "lighter_signers"
 
 
@@ -269,9 +294,36 @@ class LighterConnector(DexConnector):
         )
 
     def build_deposit_tx(self, w3: Web3, from_address: str, chain: Chain, stable: Stable, amount_usd: float) -> dict:
-        raise NotImplementedError(
-            "Lighter: deposit was explicitly excluded — only the fast withdrawal path was requested"
+        if amount_usd < _MIN_DEPOSIT_USD:
+            raise RuntimeError(
+                f"Lighter: {amount_usd} USDC is below the CCTP fast-deposit path's "
+                f"${_MIN_DEPOSIT_USD:.0f} minimum (docs, verbatim)."
+            )
+
+        # Deterministic per (chain, from_addr) — a fresh call returns the
+        # same intent_address as an earlier one for this same sender/chain,
+        # regardless of `amount`, confirmed live 2026-09-14. No auth needed
+        # (unlike withdraw above). `amount` must be a bare positive integer
+        # string — "5.0"/"5.00" are rejected ("invalid amount"), confirmed
+        # live the same day — so it's rounded to whole USD here; it isn't
+        # what actually gets credited, only the real ERC-20 transfer below
+        # (in full amount_usd, fractional cents included) is.
+        response = requests.post(
+            f"{_BASE_URL}/api/v1/createIntentAddress",
+            data={
+                "chain_id": str(get_metadata(chain).chain_id),
+                "from_addr": from_address,
+                "amount": str(max(1, round(amount_usd))),
+            },
+            timeout=15,
         )
+        response.raise_for_status()
+        result = response.json()
+        if result.get("code") != 200:
+            raise RuntimeError(f"Lighter: createIntentAddress -> {result}")
+        intent_address = result["intent_address"]
+
+        return chain_ops.build_erc20_transfer_tx(w3, chain, stable, from_address, intent_address, amount_usd)
 
     def poll_balance_usd(self, stable: Stable) -> float:
         # Same read as balances.py::_lighter — a plain public GET, no

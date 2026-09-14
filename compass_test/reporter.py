@@ -22,6 +22,17 @@ def save_report(report: TestRunReport) -> Path:
     payload = json.dumps(report.to_dict(), indent=2, sort_keys=True)
     path.write_text(payload, encoding="utf-8")
     (config.REPORTS_DIR / "latest.json").write_text(payload, encoding="utf-8")
+    if report.live:
+        # A live run may have added a delay sample: refresh
+        # connectors/dex_measured_delays.json so the next graph build /
+        # hop estimate uses it (see calibration.py). Best effort — a failure
+        # here must never lose the report we just wrote.
+        from . import calibration  # local import: calibration imports reporter lazily too
+
+        try:
+            calibration.rebuild_measured_delays()
+        except Exception as exc:  # noqa: BLE001 - surfaced, not fatal
+            print(f"warning: could not rebuild measured delays: {exc}")
     return path
 
 

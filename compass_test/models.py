@@ -14,6 +14,11 @@ from enum import Enum
 class HopType(str, Enum):
     WITHDRAW = "Withdraw"
     DEPOSIT = "Deposit"
+    # Same-chain stable -> stable conversion (WalletNode -> WalletNode,
+    # EdgeType.Swap), executed through CoW Swap — see runners/cowswap.py.
+    # `dex` on such a hop is the venue name (connectors.cowswap.
+    # COWSWAP_VENUE_NAME), `stable` the sold stable, `toStable` the bought one.
+    SWAP = "Swap"
 
 
 @dataclass
@@ -28,13 +33,28 @@ class PlannedHop:
     stable: str  # graph.structures.DEXes.Stable member name, e.g. "USDT"
     estimatedCostUsd: float
     estimatedTimeSeconds: float
+    # SWAP hops only: the stable BOUGHT (`stable` above is the one sold).
+    # "" for Withdraw/Deposit — one stable in, same stable out.
+    toStable: str = ""
+    # What the hand-typed config (Config tab / DEFAULT_*) says for this
+    # edge, regardless of any measurement — costing.computeConfiguredDelay.
+    # estimatedTimeSeconds above is what the solver actually uses: equal to
+    # this when timeSource == "configured", or the mean of the last live
+    # runs when timeSource == "measured" (see costing.computeDelay and
+    # connectors/dex_measured_delays.py). Kept side by side so the Test
+    # Results tab can still show how wrong the DEX frontend's claim was
+    # even after a measurement has replaced it. Default None only for
+    # reports written before this field existed.
+    configuredTimeSeconds: float | None = None
+    timeSource: str = "configured"  # "configured" | "measured"
     # Solver-chosen amount on this edge (edge.flow), kept only for context —
     # the actually-tested amount is amountRequestedUsd on ExecutedHop below,
     # deliberately a small capped test amount, never the solver's amount.
-    # main._generateMockImbalances grounds a surplus DEX's amount in its real
-    # balance when a connector is available, but a deficit DEX's amount is
-    # still an ungrounded mock (no real TARGET data, see connectors/zfund.py)
-    # — solvedFlowUsd can still be an amount no real account could move.
+    # Imbalances are hand-set per DEX (connectors/dex_imbalances.json, see
+    # connectors.dex_imbalances) — solvedFlowUsd is bounded by what the user
+    # typed, not by a real balance, so it can still exceed what an account
+    # holds. The "Execute" button in the graph UI runs a hop at exactly
+    # this amount (POST /api/test-hop live), subject to executor's $ caps.
     solvedFlowUsd: float = 0.0
     # WITHDRAW hops only: this DEX/chain's configured minimum withdrawal
     # amount (DEX.minWithdrawUsdByChain, edited in the Config tab — "Min
@@ -61,6 +81,9 @@ class PlannedHop:
             stable=d["stable"],
             estimatedCostUsd=d["estimatedCostUsd"],
             estimatedTimeSeconds=d["estimatedTimeSeconds"],
+            toStable=d.get("toStable", ""),
+            configuredTimeSeconds=d.get("configuredTimeSeconds"),
+            timeSource=d.get("timeSource", "configured"),
             solvedFlowUsd=d.get("solvedFlowUsd", 0.0),
             minWithdrawUsd=d.get("minWithdrawUsd", 0.0),
             minDepositUsd=d.get("minDepositUsd", 0.0),
@@ -78,7 +101,13 @@ class ExecutedHop:
     actualCostUsd: float | None  # None only if a live measurement failed/timed out
     amountReceivedUsd: float | None = None
     txHash: str | None = None
-    externalId: str | None = None  # exchange-side withdraw id, when applicable
+    # Deposit hops only: when the on-chain transfer's receipt came back, so
+    # actualTimeSeconds (= finishedAt - startedAt, the full delta the
+    # calibration averages) can later be split into chain confirmation
+    # (txConfirmedAt - startedAt) vs. DEX crediting (finishedAt -
+    # txConfirmedAt). None for withdraws and for older reports.
+    txConfirmedAt: float | None = None
+    externalId: str | None = None  # exchange-side withdraw id / CoW order UID, when applicable
     status: str = "ok"  # "ok" | "unconfirmed" | "error" | "dry_run"
     notes: str = ""
 
@@ -101,6 +130,7 @@ class ExecutedHop:
             actualCostUsd=d.get("actualCostUsd"),
             amountReceivedUsd=d.get("amountReceivedUsd"),
             txHash=d.get("txHash"),
+            txConfirmedAt=d.get("txConfirmedAt"),
             externalId=d.get("externalId"),
             status=d.get("status", "ok"),
             notes=d.get("notes", ""),

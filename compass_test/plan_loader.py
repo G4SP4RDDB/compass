@@ -1,14 +1,16 @@
 """Builds the SAME solved graph the frontend renders (main.buildAndSolveGraph
-— same solver, same demo-imbalance seed by default) and reduces its solver-
+— same solver, same hand-set imbalances from connectors/dex_imbalances.json)
+and reduces its solver-
 chosen journeys (visualization/journeys.decomposeJourneys — the exact
 decomposition operations.txt and the 'Chosen Operations' tab already use)
 down to the Withdraw/Deposit hops compass_test can actually execute.
 
-A journey that touches a Swap or Bridge hop is marked out of scope WHOLESALE
-(never partially executed) — v1 only instruments Withdraw/Deposit (see
-README.md), and silently dropping the swap/bridge leg of a journey while
-still running its withdraw+deposit would test something the solver never
-actually chose.
+A journey that touches a Bridge hop is marked out of scope WHOLESALE (never
+partially executed) — Bridge isn't instrumented (see README.md), and
+silently dropping the bridge leg of a journey while still running its
+withdraw+deposit would test something the solver never actually chose.
+Swap hops (same-chain USDC <-> USDT) ARE instrumented, through CoW Swap
+(runners/cowswap.py), on BSC and Arbitrum only.
 """
 
 from __future__ import annotations
@@ -17,7 +19,8 @@ from dataclasses import dataclass, field
 
 # `src` is put on sys.path by compass_test/__init__.py (runs before this
 # module, as for any package submodule) — these imports rely on that.
-from connectors.dex_operational_params import apply_dex_operational_params, load_dex_operational_params
+from connectors.cowswap import COWSWAP_VENUE_NAME
+from connectors.dex_operational_params import apply_all_dex_params
 from connectors.gas import GasFeeService
 from graph import costing
 from graph.edge import Edge, EdgeType
@@ -29,6 +32,7 @@ from main import buildAndSolveGraph
 from visualization.journeys import decomposeJourneys
 
 from .models import HopType, PlannedHop
+from .runners.cowswap import CowSwapRunner
 from .runners.registry import is_supported
 
 
@@ -52,12 +56,32 @@ def _hop_type(edge: Edge) -> HopType | None:
         return HopType.WITHDRAW
     if edge.u.type == NodeType.Wallet and edge.v.type == NodeType.SourceNode:
         return HopType.DEPOSIT
+    if edge.type == EdgeType.Swap:
+        return HopType.SWAP
     return None
 
 
 def _planned_hop_from_edge(edge: Edge) -> PlannedHop:
     hopType = _hop_type(edge)
     assert hopType is not None
+    if hopType == HopType.SWAP:
+        walletIn, walletOut = edge.u, edge.v
+        # The solver's own all-in estimate for this exact edge: the fixed
+        # gas Fee(e) (edge.cost) PLUS the slippage it quoted at the chosen
+        # amount (edge.realizedSlippageUsd, see solver.graphSolve) — the
+        # same sum the UI shows (web_view._edgeCost).
+        return PlannedHop(
+            hopType=hopType,
+            dex=COWSWAP_VENUE_NAME,
+            chain=walletIn.chain.name,
+            stable=walletIn.stable.name,
+            toStable=walletOut.stable.name,
+            estimatedCostUsd=(edge.cost or 0.0) + (edge.realizedSlippageUsd or 0.0),
+            estimatedTimeSeconds=edge.time or 0.0,
+            configuredTimeSeconds=costing.computeConfiguredDelay(edge),
+            timeSource=costing.delaySource(edge),
+            solvedFlowUsd=edge.flow or 0.0,
+        )
     dex = edge.u.dex if hopType == HopType.WITHDRAW else edge.v.dex
     # Withdraw: edge.u (WithdrawNode) has no .chain (its scope is dex+stable
     # only, see graph.node.WithdrawNode) — the chain actually used is the
@@ -71,6 +95,8 @@ def _planned_hop_from_edge(edge: Edge) -> PlannedHop:
         stable=edge.u.stable.name,
         estimatedCostUsd=edge.cost or 0.0,
         estimatedTimeSeconds=edge.time or 0.0,
+        configuredTimeSeconds=costing.computeConfiguredDelay(edge),
+        timeSource=costing.delaySource(edge),
         solvedFlowUsd=edge.flow or 0.0,
         minWithdrawUsd=dex.minWithdrawUsdByChain[chain] if hopType == HopType.WITHDRAW else 0.0,
         minDepositUsd=dex.minDepositUsdByChain[chain] if hopType == HopType.DEPOSIT else 0.0,
@@ -80,16 +106,14 @@ def _planned_hop_from_edge(edge: Edge) -> PlannedHop:
 def list_planned_journeys(graph: Graph) -> list[PlannedJourney]:
     planned: list[PlannedJourney] = []
     for journey in decomposeJourneys(graph):
-        outOfScopeEdges = [e for e in journey.hops if e.type in (EdgeType.Swap, EdgeType.Bridge)]
-        if outOfScopeEdges:
-            kinds = sorted({e.type.name for e in outOfScopeEdges})
+        if any(e.type == EdgeType.Bridge for e in journey.hops):
             planned.append(
                 PlannedJourney(
                     fromDex=journey.fromDex,
                     toDex=journey.toDex,
                     stable=journey.stable,
                     inScope=False,
-                    outOfScopeReason=f"journey includes a {'/'.join(kinds)} hop — v1 only instruments Withdraw/Deposit",
+                    outOfScopeReason="journey includes a Bridge hop — only Withdraw/Swap/Deposit are instrumented",
                 )
             )
             continue
@@ -98,17 +122,28 @@ def list_planned_journeys(graph: Graph) -> list[PlannedJourney]:
         if not hops:
             continue  # every edge on this journey is an internal zero-cost/zero-time hop, nothing to test
 
-        unsupportedDexes = sorted({h.dex for h in hops if not is_supported(h.dex)})
+        reasons: list[str] = []
+        unsupportedDexes = sorted({h.dex for h in hops if h.hopType != HopType.SWAP and not is_supported(h.dex)})
+        if unsupportedDexes:
+            reasons.append(f"no connector yet for: {', '.join(unsupportedDexes)}")
+        unsupportedSwaps = sorted(
+            {
+                f"{h.stable}->{h.toStable} on {h.chain}"
+                for h in hops
+                if h.hopType == HopType.SWAP
+                and not CowSwapRunner.supports(Chain[h.chain], Stable[h.stable], Stable[h.toStable])
+            }
+        )
+        if unsupportedSwaps:
+            reasons.append(f"swap not instrumented ({COWSWAP_VENUE_NAME} is wired for BSC/Arbitrum only): {', '.join(unsupportedSwaps)}")
         planned.append(
             PlannedJourney(
                 fromDex=journey.fromDex,
                 toDex=journey.toDex,
                 stable=journey.stable,
                 hops=hops,
-                inScope=not unsupportedDexes,
-                outOfScopeReason=(
-                    f"no connector yet for: {', '.join(unsupportedDexes)}" if unsupportedDexes else ""
-                ),
+                inScope=not reasons,
+                outOfScopeReason="; ".join(reasons),
             )
         )
     return planned
@@ -117,12 +152,12 @@ def list_planned_journeys(graph: Graph) -> list[PlannedJourney]:
 def load_configured_dex_registry() -> dict[str, DEX]:
     """The real DEX registry (src/graph/structures/dex_registry.py) with real
     operational params applied (Config tab / dex_operational_params.json) —
-    NO demo imbalances, no graph build, no solve. Used by build_hop_estimate
+    NO imbalances, no graph build, no solve. Used by build_hop_estimate
     below to test one DEX/chain/stable directly, independent of whatever
-    journey the solver's demo-imbalance seed happens to produce (today, only
+    journey the hand-set imbalances happen to produce (today, only
     Aster -> MEXC — see list_planned_journeys)."""
     registry = buildDexRegistry()
-    apply_dex_operational_params(list(registry.values()), load_dex_operational_params())
+    apply_all_dex_params(list(registry.values()))
     return registry
 
 
@@ -150,6 +185,8 @@ def build_hop_estimate(
             stable=stable.name,
             estimatedCostUsd=costing.computeCost(edge, gasFeeService),
             estimatedTimeSeconds=costing.computeDelay(edge),
+            configuredTimeSeconds=costing.computeConfiguredDelay(edge),
+            timeSource=costing.delaySource(edge),
             minWithdrawUsd=dex.minWithdrawUsdByChain[chain],
         )
 
@@ -163,5 +200,35 @@ def build_hop_estimate(
         stable=stable.name,
         estimatedCostUsd=costing.computeCost(edge, gasFeeService),
         estimatedTimeSeconds=costing.computeDelay(edge),
+        configuredTimeSeconds=costing.computeConfiguredDelay(edge),
+        timeSource=costing.delaySource(edge),
         minDepositUsd=dex.minDepositUsdByChain[chain],
+    )
+
+
+def build_swap_hop_estimate(
+    chain: Chain, stableIn: Stable, stableOut: Stable, amount_usd: float, gasFeeService: GasFeeService | None = None
+) -> PlannedHop:
+    """Swap counterpart of build_hop_estimate: the solver's own estimate for
+    a WalletNode(chain, stableIn) -> WalletNode(chain, stableOut) edge
+    (Graph._linkSwaps shape) at exactly `amount_usd` — Fee(e) from
+    costing.computeCost (the fixed swap gas) plus the slippage
+    costing.computeRealizedSwapSlippageUsd quotes (Uniswap QuoterV2) at
+    that amount, i.e. what the solver would have charged had it picked this
+    edge for that flow. Compared against what CoW actually charges."""
+    gasFeeService = gasFeeService or GasFeeService()
+    edge = Edge(WalletNode(chain, stableIn, nodeIndex=0), WalletNode(chain, stableOut, nodeIndex=1), type=EdgeType.Swap)
+    edge.flow = amount_usd
+    edge.realizedSlippageUsd = costing.computeRealizedSwapSlippageUsd(edge)
+    return PlannedHop(
+        hopType=HopType.SWAP,
+        dex=COWSWAP_VENUE_NAME,
+        chain=chain.name,
+        stable=stableIn.name,
+        toStable=stableOut.name,
+        estimatedCostUsd=costing.computeCost(edge, gasFeeService) + edge.realizedSlippageUsd,
+        estimatedTimeSeconds=costing.computeDelay(edge),
+        configuredTimeSeconds=costing.computeConfiguredDelay(edge),
+        timeSource=costing.delaySource(edge),
+        solvedFlowUsd=amount_usd,
     )

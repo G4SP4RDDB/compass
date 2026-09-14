@@ -1,0 +1,240 @@
+{
+  "Aden": {
+    "BSC": {
+      "depositDelaySeconds": {
+        "lastMeasuredAt": 1788791000.856608,
+        "maxSeconds": 70.11543297767639,
+        "meanSeconds": 70.11543297767639,
+        "minSeconds": 70.11543297767639,
+        "n": 1,
+        "sampleRunIds": [
+          "20260907T142320Z"
+        ],
+        "samplesSeconds": [
+          70.11543297767639
+        ],
+        "stdSeconds": 0.0
+      },
+      "withdrawDelaySeconds": {
+        "lastMeasuredAt": 1788802390.5899022,
+        "maxSeconds": 36.736600160598755,
+        "meanSeconds": 36.51546669006348,
+        "minSeconds": 36.2943332195282,
+        "n": 2,
+        "sampleRunIds": [
+          "20260907T171447Z",
+          "20260907T173310Z"
+        ],
+        "samplesSeconds": [
+          36.736600160598755,
+          36.2943332195282
+        ],
+        "stdSeconds": 0.3127299531256218
+      }
+    }
+  },
+  "Aster": {
+    "BSC": {
+      "withdrawDelaySeconds": {
+        "lastMeasuredAt": 1788806391.8077362,
+        "maxSeconds": 7.931287050247192,
+        "meanSeconds": 7.931287050247192,
+        "minSeconds": 7.931287050247192,
+        "n": 1,
+        "sampleRunIds": [
+          "20260907T183951Z"
+        ],
+        "samplesSeconds": [
+          7.931287050247192
+        ],
+        "stdSeconds": 0.0
+      }
+    }
+  },
+  "CoW Swap": {
+    "ARBITRUM": {
+      "swapDelaySeconds": {
+        "lastMeasuredAt": 1789132739.237752,
+        "maxSeconds": 17.691370964050293,
+        "meanSeconds": 17.691370964050293,
+        "minSeconds": 17.691370964050293,
+        "n": 1,
+        "sampleRunIds": [
+          "20260911T131859Z"
+        ],
+        "samplesSeconds": [
+          17.691370964050293
+        ],
+        "stdSeconds": 0.0
+      }
+    },
+    "BSC": {
+      "swapDelaySeconds": {
+        "lastMeasuredAt": 1789132967.722831,
+        "maxSeconds": 11.887470006942749,
+        "meanSeconds": 11.887470006942749,
+        "minSeconds": 11.887470006942749,
+        "n": 1,
+        "sampleRunIds": [
+          "20260911T132247Z"
+        ],
+        "samplesSeconds": [
+          11.887470006942749
+        ],
+        "stdSeconds": 0.0
+      }
+    }
+  },
+  "Extended": {
+    "ARBITRUM": {
+      "depositDelaySeconds": {
+        "lastMeasuredAt": 1788777301.9095428,
+        "maxSeconds": 15.453186750411987,
+        "meanSeconds": 15.453186750411987,
+        "minSeconds": 15.453186750411987,
+        "n": 1,
+        "sampleRunIds": [
+          "20260907T103501Z"
+        ],
+        "samplesSeconds": [
+          15.453186750411987
+        ],
+        "stdSeconds": 0.0
+      },
+      "withdrawDelaySeconds": {
+        "lastMeasuredAt": 1788777084.036009,
+        "maxSeconds": 123.20151996612549,
+        "meanSeconds": 123.20151996612549,
+        "minSeconds": 123.20151996612549,
+        "n": 1,
+        "sampleRunIds": [
+          "20260907T103124Z"
+        ],
+        "samplesSeconds": [
+          123.20151996612549
+        ],
+        "stdSeconds": 0.0
+      }
+    }
+  },
+  "Hyperliquid": {
+    "ARBITRUM": {
+      "depositDelaySeconds": {
+        "lastMeasuredAt": 1788707054.721212,
+        "maxSeconds": 20.479201793670654,
+        "meanSeconds": 20.479201793670654,
+        "minSeconds": 20.479201793670654,
+        "n": 1,
+        "sampleRunIds": [
+          "20260906T150414Z"
+        ],
+        "samplesSeconds": [
+          20.479201793670654
+        ],
+        "stdSeconds": 0.0
+      },
+      "withdrawDelaySeconds": {
+        "lastMeasuredAt": 1788708315.879884,
+        "maxSeconds": 228.56112003326416,
+        "meanSeconds": 160.28820157051086,
+        "minSeconds": 92.01528310775757,
+        "n": 2,
+        "sampleRunIds": [
+          "20260906T152514Z",
+          "20260906T152515Z"
+        ],
+        "samplesSeconds": [
+          92.01528310775757,
+          228.56112003326416
+        ],
+        "stdSeconds": 96.5524872328182
+      }
+    }
+  },
+  "Lighter": {
+    "ARBITRUM": {
+      "withdrawDelaySeconds": {
+        "lastMeasuredAt": 1788704022.416084,
+        "maxSeconds": 10.63029408454895,
+        "meanSeconds": 10.63029408454895,
+        "minSeconds": 10.63029408454895,
+        "n": 1,
+        "sampleRunIds": [
+          "20260906T141342Z"
+        ],
+        "samplesSeconds": [
+          10.63029408454895
+        ],
+        "stdSeconds": 0.0
+      }
+    }
+  },
+  "MEXC": {
+    "BSC": {
+      "depositDelaySeconds": {
+        "lastMeasuredAt": 1788645791.731912,
+        "maxSeconds": 45.48959684371948,
+        "meanSeconds": 45.48959684371948,
+        "minSeconds": 45.48959684371948,
+        "n": 1,
+        "sampleRunIds": [
+          "20260905T220311Z"
+        ],
+        "samplesSeconds": [
+          45.48959684371948
+        ],
+        "stdSeconds": 0.0
+      },
+      "withdrawDelaySeconds": {
+        "lastMeasuredAt": 1788694632.8219619,
+        "maxSeconds": 50.414684772491455,
+        "meanSeconds": 50.414684772491455,
+        "minSeconds": 50.414684772491455,
+        "n": 1,
+        "sampleRunIds": [
+          "20260906T113712Z"
+        ],
+        "samplesSeconds": [
+          50.414684772491455
+        ],
+        "stdSeconds": 0.0
+      }
+    }
+  },
+  "Ondo Perps": {
+    "ARBITRUM": {
+      "depositDelaySeconds": {
+        "lastMeasuredAt": 1789391602.9410062,
+        "maxSeconds": 314.1203408241272,
+        "meanSeconds": 307.43619267145795,
+        "minSeconds": 303.8532681465149,
+        "n": 3,
+        "sampleRunIds": [
+          "20260907T144311Z",
+          "20260914T123335Z",
+          "20260914T131322Z"
+        ],
+        "samplesSeconds": [
+          314.1203408241272,
+          304.3349690437317,
+          303.8532681465149
+        ],
+        "stdSeconds": 5.793650518776473
+      },
+      "withdrawDelaySeconds": {
+        "lastMeasuredAt": 1788792918.850341,
+        "maxSeconds": 3.1343510150909424,
+        "meanSeconds": 3.1343510150909424,
+        "minSeconds": 3.1343510150909424,
+        "n": 1,
+        "sampleRunIds": [
+          "20260907T145518Z"
+        ],
+        "samplesSeconds": [
+          3.1343510150909424
+        ],
+        "stdSeconds": 0.0
+      }
+    }
+  }
+}

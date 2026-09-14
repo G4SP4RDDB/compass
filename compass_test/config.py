@@ -54,9 +54,28 @@ MAX_USD_PER_RUN = float(os.getenv("COMPASS_TEST_MAX_USD_PER_RUN", "20"))
 
 # Timeouts for polling an on-chain wallet balance / a DEX account balance
 # for a credit before giving up and reporting the hop as "unconfirmed"
-# rather than hanging forever.
+# rather than hanging forever. The interval bounds the measurement's
+# granularity: actualTimeSeconds overshoots the real credit time by up to
+# one interval, and those measurements now feed the solver's Time(e)
+# directly (see calibration.py) — 2s keeps that bias small next to the
+# fastest real hops seen so far (~3s Ondo withdraw on Arbitrum) without
+# hammering the RPC/DEX API.
 POLL_TIMEOUT_SECONDS = float(os.getenv("COMPASS_TEST_POLL_TIMEOUT_SECONDS", "600"))
-POLL_INTERVAL_SECONDS = float(os.getenv("COMPASS_TEST_POLL_INTERVAL_SECONDS", "5"))
+POLL_INTERVAL_SECONDS = float(os.getenv("COMPASS_TEST_POLL_INTERVAL_SECONDS", "2"))
+
+# --- Swap hop (CoW Swap, see runners/cowswap.py) -------------------------
+# Test amount for a Swap hop when none is given: unlike Withdraw/Deposit
+# there's no per-DEX "minimum" to fall back on (a swap has no DEX), only
+# CoW's own implicit floor — the network fee must fit inside the sell
+# amount (a ~$0.01 fee on a $1 USDC->USDT order was quoted fine on both BSC
+# and Arbitrum, 2026-09-10).
+DEFAULT_SWAP_TEST_USD = float(os.getenv("COMPASS_TEST_SWAP_TEST_USD", "1"))
+# Slippage tolerance folded into the order's minimum buy amount (basis
+# points). CoW never fills below it — a worse market simply lets the order
+# expire unfilled (status "expired"), it never executes at a worse price.
+# 50 bps = 0.5%: generous for a stable/stable pair (quoted spread was ~1
+# bp), tight enough that a real depeg can't be traded through.
+SWAP_SLIPPAGE_BPS = int(os.getenv("COMPASS_TEST_SWAP_SLIPPAGE_BPS", "50"))
 
 # Name of the env var (checked via the same load chain above) holding the
 # operating wallet's private key — the wallet that receives DEX withdrawals

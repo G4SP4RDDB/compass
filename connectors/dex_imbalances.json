@@ -1,0 +1,12 @@
+{
+  "Aden": {
+    "amountUsd": 1000.0,
+    "chain": null,
+    "kind": "surplus",
+    "stable": "USDT"
+  },
+  "Ondo Perps": {
+    "amountUsd": 1.0,
+    "kind": "deficit"
+  }
+}

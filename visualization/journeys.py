@@ -5,7 +5,7 @@ from typing import cast
 
 from graph.edge import Edge
 from graph.graph import Graph
-from graph.node import Node, NodeType, SourceNode, WithdrawNode
+from graph.node import Node, NodeType, SourceNode, WalletNode, WithdrawNode
 
 _FLOW_EPS = 1e-9
 
@@ -16,6 +16,10 @@ class Journey:
     solveur (edge.flow), en suivant les arêtes à flot positif depuis un
     WithdrawNode jusqu'au SourceNode d'arrivée. Voir decomposeJourneys."""
 
+    # DEX de départ, OU "Wallet <CHAIN>/<STABLE>" quand le trajet part de
+    # l'argent déjà présent sur l'operating wallet (voir WalletNode.balance,
+    # fromWallet=True) : pas de retrait DEX en tête, le premier hop est
+    # directement un dépôt/bridge/swap depuis ce wallet.
     fromDex: str
     toDex: str
     amount: float
@@ -33,6 +37,7 @@ class Journey:
     # trajet n'est qu'UNE explication plausible parmi toutes celles qui
     # reproduiraient le même flot agrégé.
     plausible: bool = False
+    fromWallet: bool = False
 
 
 def decomposeJourneys(graph: Graph) -> list[Journey]:
@@ -66,7 +71,22 @@ def decomposeJourneys(graph: Graph) -> list[Journey]:
         if node.type != NodeType.Withdraw:
             continue
         while any(remaining.get(i, 0.0) > _FLOW_EPS for i in outEdgesByNode.get(node.nodeIndex, [])):
-            journey = _extractOneJourney(graph, cast(WithdrawNode, node), remaining, outEdgesByNode, ambiguousNodes)
+            journey = _extractOneJourney(graph, node, remaining, outEdgesByNode, ambiguousNodes)
+            if journey is None:
+                break
+            journeys.append(journey)
+
+    # Ce qui reste après avoir épuisé les retraits DEX ne peut venir que du
+    # solde propre des wallets (voir WalletNode.balance et
+    # solver._addFlowConservation) : un trajet par tranche, qui démarre
+    # directement au wallet. Un wallet à solde 0 n'a par construction plus
+    # de flot sortant non apparié ici (transit pur : tout ce qui sort y est
+    # entré via un trajet déjà extrait).
+    for node in graph.nodeList:
+        if node.type != NodeType.Wallet:
+            continue
+        while any(remaining.get(i, 0.0) > _FLOW_EPS for i in outEdgesByNode.get(node.nodeIndex, [])):
+            journey = _extractOneJourney(graph, node, remaining, outEdgesByNode, ambiguousNodes)
             if journey is None:
                 break
             journeys.append(journey)
@@ -93,7 +113,7 @@ def _ambiguousNodeIndices(graph: Graph) -> set[int]:
 
 def _extractOneJourney(
     graph: Graph,
-    startNode: WithdrawNode,
+    startNode: Node,
     remaining: dict[int, float],
     outEdgesByNode: dict[int, list[int]],
     ambiguousNodes: set[int],
@@ -122,11 +142,18 @@ def _extractOneJourney(
         if remaining[i] <= _FLOW_EPS:
             del remaining[i]
 
+    if startNode.type == NodeType.Wallet:
+        wallet = cast(WalletNode, startNode)
+        fromLabel, stable, fromWallet = f"Wallet {wallet.chain.name}/{wallet.stable.name}", wallet.stable, True
+    else:
+        withdraw = cast(WithdrawNode, startNode)
+        fromLabel, stable, fromWallet = withdraw.dex.name, withdraw.stable, False
     return Journey(
-        fromDex=startNode.dex.name,
+        fromDex=fromLabel,
         toDex=cast(SourceNode, current).dex.name,
         amount=amount,
-        stable=startNode.stable.name,
+        stable=stable.name,
         hops=[graph.edgeList[i] for i in path],
         plausible=touchesAmbiguous,
+        fromWallet=fromWallet,
     )

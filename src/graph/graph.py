@@ -24,13 +24,18 @@ class Graph:
         dexList: list[DEX],
         swapList: list[SwapVenue],
         gasFeeService: GasFeeService | None = None,
+        walletBalances: dict[tuple[Chain, Stable], float] | None = None,
     ):
+        """walletBalances : solde réel de l'operating wallet par (chain,
+        stable), posé sur le WalletNode correspondant (voir WalletNode.balance)
+        — une source bornée de plus pour le solveur, à côté des surplus DEX.
+        Absent/vide -> tous les wallets à 0 (purs nœuds de transit)."""
         self.nodeList: list[Node] = []
         self.edgeList: list[Edge] = []
         self.nodeIndex = 0
         self._gasFeeService = gasFeeService or GasFeeService()
         self._addSourceAndWithdrawNodes(dexList)
-        self._addWalletNodes()
+        self._addWalletNodes(walletBalances or {})
         self._linkWithdrawalsAndDeposits(dexList)
         self._linkBridges()
         self.computeAllCosts()
@@ -60,7 +65,7 @@ class Graph:
                 self.nodeList.append(withdrawNode)
                 self.nodeIndex += 1
 
-    def _addWalletNodes(self) -> None:
+    def _addWalletNodes(self, walletBalances: dict[tuple[Chain, Stable], float]) -> None:
         """Un WalletNode par (chain, stable) — PARTAGÉ entre tous les DEX,
         aucun propriétaire (voir node.WalletNode) : un seul point de vérité
         pour "l'argent en transit sur cette chain, dans cette stable", que ce
@@ -72,7 +77,8 @@ class Graph:
         Graph._linkWithdrawalsAndDeposits)."""
         for chain in Chain:
             for stable in Stable:
-                self.nodeList.append(WalletNode(chain, stable, self.nodeIndex))
+                balance = max(walletBalances.get((chain, stable), 0.0), 0.0)
+                self.nodeList.append(WalletNode(chain, stable, self.nodeIndex, balance=balance))
                 self.nodeIndex += 1
 
     def _linkWithdrawalsAndDeposits(self, dexList: list[DEX]) -> None:
@@ -194,13 +200,13 @@ class Graph:
     def computeAllCapacities(self) -> None:
         # Borne "infinie" pour les arêtes non contraintes par un excédent/déficit
         # (bridge, swap) : aucun flot ne peut de toute façon dépasser le total
-        # des excédents du système, par conservation. Le surplus vit sur les
-        # WithdrawNode (SourceNode ne peut plus être que <= 0).
+        # des sources du système, par conservation. Les sources sont les
+        # surplus DEX (WithdrawNode.balance) ET l'argent déjà dans les
+        # wallets (WalletNode.balance) — oublier les seconds bornerait les
+        # bridges/swaps à 0 dans un plan servi uniquement par le wallet.
         totalSurplus = sum(
-            cast(WithdrawNode, node).balance
-            for node in self.nodeList
-            if node.type == NodeType.Withdraw
-        )
+            cast(WithdrawNode, node).balance for node in self.nodeList if node.type == NodeType.Withdraw
+        ) + sum(cast(WalletNode, node).balance for node in self.nodeList if node.type == NodeType.Wallet)
         for edge in self.edgeList:
             edge.capacity = self._edgeCapacity(edge, totalSurplus)
 

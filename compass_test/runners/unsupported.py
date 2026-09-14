@@ -29,9 +29,10 @@ Reasons, so the gap is legible rather than mysterious:
     chains, a new third-party dependency), decided against for now.
 Hyperliquid, Lighter, Extended and Ondo Perps moved OUT of this table — see
 runners/hyperliquid.py, runners/lighter.py, runners/extended.py and
-runners/ondo.py (Lighter and Extended: withdraw only — deposit still lands
-here implicitly via NotImplementedError raised directly in each connector,
-not via this module). Ondo Perps turned out to be documented after all —
+runners/ondo.py (Extended: withdraw only — deposit still lands here
+implicitly via NotImplementedError raised directly in the connector, not via
+this module; Lighter now supports both fast withdraw and fast/CCTP deposit).
+Ondo Perps turned out to be documented after all —
 the earlier "no Bearer JWT handshake" reason was based on the "Builder
 Integration Guide" page alone; the separate "API Reference" pages
 (docs.ondoperps.xyz/api-reference/wallet/*) document both deposit and

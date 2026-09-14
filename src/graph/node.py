@@ -40,10 +40,21 @@ class WalletNode(Node):
     contrat déplace les fonds d'un wallet à l'autre) : jamais de node
     intermédiaire dédié, l'edge à lui seul EST l'opération (voir graph.edge.EdgeType)."""
 
-    def __init__(self, chain: Chain, stable: Stable, nodeIndex: int):
+    def __init__(self, chain: Chain, stable: Stable, nodeIndex: int, balance: float = 0.0):
         super().__init__(NodeType.Wallet, nodeIndex)
         self.chain = chain
         self.stable = stable
+        # Solde RÉEL déjà présent sur l'operating wallet pour ce (chain,
+        # stable) au moment du build (voir Graph.__init__ walletBalances,
+        # rempli par main.buildAndSolveGraph depuis compass_test.balances /
+        # connectors.wallet_sources). Source FONGIBLE et BORNÉE pour le
+        # solveur, exactement comme WithdrawNode.balance : au plus ce montant
+        # peut sortir du wallet sans y être entré dans le même plan (voir
+        # solver._addFlowConservation). 0.0 = pur nœud de transit (l'ancien
+        # comportement) : l'argent déjà dans le wallet n'existait pas pour le
+        # solveur, qui préférait retirer+bridger depuis un DEX plutôt que de
+        # déposer $1 déjà disponible à côté.
+        self.balance = balance
 
 
 class DepositNode(Node):

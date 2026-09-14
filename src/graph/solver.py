@@ -6,7 +6,7 @@ from connectors.exceptions import ConnectorError
 from graph import costing
 from graph.edge import Edge, EdgeType
 from graph.graph import Graph
-from graph.node import NodeType, SourceNode, WithdrawNode
+from graph.node import NodeType, SourceNode, WalletNode, WithdrawNode
 from graph.structures.DEXes import DEX
 from graph.urgency import TimeWeightParams, computeDexUrgencySigma, computeTimeWeight
 
@@ -148,15 +148,42 @@ def _addFlowConservation(
             # Source pure et fongible entre commodités : n'importe quel DEX
             # déficitaire peut consommer ce surplus, seule la somme totale
             # évacuée est contrainte (pas de répartition imposée par nœud).
+            # Borne SUPÉRIEURE, pas égalité : le surplus est "ce qui est
+            # disponible", pas "ce qui doit partir" — le solveur ne retire
+            # que ce que les déficits exigent, chez les sources les moins
+            # chères, et le reste du surplus reste sur place. Les déficits
+            # (SourceNode ci-dessous), eux, sont comblés exactement. Depuis
+            # les déséquilibres saisis à la main (connectors.dex_imbalances),
+            # une égalité stricte forcerait l'utilisateur à taper des
+            # totaux exactement égaux des deux côtés.
             totalOut = sum(sum(outflowByNode[node.nodeIndex][d]) for d in range(numCommodities))
-            model.Add(totalOut == _scaledInt(cast(WithdrawNode, node).balance))
+            model.Add(totalOut <= _scaledInt(cast(WithdrawNode, node).balance))
             continue
 
-        # SourceNode (déficit <= 0) et WithdrawNode (traité ci-dessus) sont
-        # les deux seuls types de nodes avec un supply non nul ; tout le
-        # reste (Deposit, Bridge, Swap) est un pur nœud de transit pour
-        # chaque commodité. Le supply d'un SourceNode n'est non nul que pour
-        # la commodité de son propre DEX (une commodité par DEX déficitaire).
+        if node.type == NodeType.Wallet and cast(WalletNode, node).balance > 0:
+            # Argent déjà présent sur l'operating wallet (voir
+            # WalletNode.balance) : même statut qu'un surplus DEX -- source
+            # fongible entre commodités, bornée par le solde (<=), jamais
+            # obligée de partir. Par commodité, le wallet ne peut pas
+            # absorber de flot (out >= in : tout ce qui entre pour d
+            # ressort pour d), et la somme des sorties nettes est plafonnée
+            # par le solde. balance == 0 retombe exactement sur le cas de
+            # transit pur ci-dessous (out - in == 0 par commodité).
+            netOuts = [
+                sum(outflowByNode[node.nodeIndex][d]) - sum(inflowByNode[node.nodeIndex][d])
+                for d in range(numCommodities)
+            ]
+            for netOut in netOuts:
+                model.Add(netOut >= 0)
+            model.Add(sum(netOuts) <= _scaledInt(cast(WalletNode, node).balance))
+            continue
+
+        # SourceNode (déficit <= 0), WithdrawNode et WalletNode à solde > 0
+        # (traités ci-dessus) sont les seuls types de nodes avec un supply
+        # non nul ; tout le reste (Deposit, Wallet vide, Bridge, Swap) est un
+        # pur nœud de transit pour chaque commodité. Le supply d'un
+        # SourceNode n'est non nul que pour la commodité de son propre DEX
+        # (une commodité par DEX déficitaire).
         for d, dex in enumerate(commodities):
             supply = 0
             if node.type == NodeType.SourceNode and cast(SourceNode, node).dex is dex:
