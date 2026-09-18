@@ -215,21 +215,47 @@ class OndoConnector(DexConnector):
             quotedFeeUsd=fee_usd,
         )
 
+    def _existing_deposit_address(self, symbol: str, account_id: str) -> str | None:
+        # Ondo caps accounts at 10 provisioned addresses (400
+        # deposit_address_limit_reached past that) and, per the module
+        # docstring, this account's addresses are already shared across
+        # ethereum/avalanche/arbitrum rather than per-network — so reuse
+        # whatever's already provisioned for this symbol+wallet instead of
+        # calling provision_address again on every deposit. No `network`
+        # filter is sent, matching that "one address, many networks" shape.
+        # Response envelope for POST /v1/wallet/deposit_address/list was
+        # confirmed live to return 200 (see docstring) but its exact key
+        # names weren't pinned down at the time — handle both a bare list
+        # result and a dict wrapping one under a plausible key.
+        result = self._post(
+            "/v1/wallet/deposit_address/list",
+            {"coins": [symbol], "depositDestination": {"id": account_id, "wallet": _WALLET}},
+        )
+        entries = result if isinstance(result, list) else (
+            result.get("addresses") or result.get("depositAddresses") or result.get("deposit_addresses") or []
+        )
+        for entry in entries:
+            if entry.get("coin") == symbol and entry.get("depositDestination", {}).get("wallet") == _WALLET:
+                return entry["address"]
+        return None
+
     def build_deposit_tx(self, w3: Web3, from_address: str, chain: Chain, stable: Stable, amount_usd: float) -> dict:
         network = _NETWORK_CODE.get(chain)
         if network is None:
             raise RuntimeError(f"Ondo: no network code known for {chain.name}")
 
         account = self._account()
-        result = self._post(
-            "/v1/provision_address",
-            {
-                "symbol": stable.name,
-                "deposit_destination": {"id": account["accountID"], "wallet": _WALLET},
-                "network": network,
-            },
-        )
-        deposit_address = result["address"]
+        deposit_address = self._existing_deposit_address(stable.name, account["accountID"])
+        if deposit_address is None:
+            result = self._post(
+                "/v1/provision_address",
+                {
+                    "symbol": stable.name,
+                    "deposit_destination": {"id": account["accountID"], "wallet": _WALLET},
+                    "network": network,
+                },
+            )
+            deposit_address = result["address"]
         return chain_ops.build_erc20_transfer_tx(w3, chain, stable, from_address, deposit_address, amount_usd)
 
     def poll_balance_usd(self, stable: Stable) -> float:

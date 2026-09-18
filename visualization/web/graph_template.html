@@ -265,6 +265,20 @@
   }
   .execute-btn:hover { background: var(--neg); color: #fff; }
   .execute-btn:disabled { opacity: .45; cursor: default; background: transparent; color: var(--muted); border-color: var(--border); }
+
+  /* "Execute All" — runs every executable row in #opsList back-to-back (see
+     onExecuteAllClick/runAllLive), NOT concurrently: the operating wallet
+     has no nonce-locking (compass_test/chain_ops.py), so two on-chain
+     submissions in flight at once from this one wallet can collide. Sits
+     right under the summary strip, hidden until bindExecuteButtons knows
+     how many rows are actually runnable on this server. */
+  .execute-all-btn {
+    display: block; width: 100%; margin: 4px 0 14px; padding: 10px 14px; font-size: 13px;
+    font-weight: 700; border-radius: 6px; border: 1.5px solid var(--neg); background: transparent;
+    color: var(--neg); cursor: pointer;
+  }
+  .execute-all-btn:hover { background: var(--neg); color: #fff; }
+  .execute-all-btn:disabled { opacity: .4; cursor: default; background: transparent; color: var(--muted); border-color: var(--border); }
   .op-row .op-exec { min-width: 70px; text-align: right; }
   .op-exec-result { grid-column: 1 / -1; width: 100%; }
   .op-exec-result .hop-test-result { margin: 4px 0 2px 24px; }
@@ -318,6 +332,21 @@
   .hop-test-result .test-err-pos { color: var(--neg); }
   .hop-test-result .test-err-neg { color: var(--pos); }
 
+  /* Terminal error message for a LIVE run (runLiveHop / runAllLive) — a
+     one-line summary always visible, the raw exception/error text tucked
+     behind <details> so a long traceback doesn't blow up the row; the
+     stage tracker above it already shows the step-by-step trail up to the
+     point of failure, this only cleans up the final message itself. */
+  .test-status-error.error-box { font-weight: 400; }
+  .test-status-error .error-summary { font-weight: 600; }
+  .test-status-error details { margin-top: 4px; }
+  .test-status-error summary { cursor: pointer; color: var(--muted); font-weight: 400; font-size: 10px; }
+  .test-status-error pre {
+    margin: 4px 0 0; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; font-size: 10px; white-space: pre-wrap; word-break: break-word; max-height: 160px;
+    overflow-y: auto; color: var(--text); font-weight: 400;
+  }
+
   .run-live-btn {
     margin-top: 6px; font-size: 10px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--neg);
     background: transparent; color: var(--neg); cursor: pointer; font-weight: 600;
@@ -338,6 +367,28 @@
   .confirm-run-btn { border: 1px solid var(--neg); background: var(--neg); color: #fff; font-weight: 700; }
   .confirm-run-btn:disabled { opacity: .4; cursor: default; }
   .cancel-live-btn { border: 1px solid var(--border); background: transparent; color: var(--muted); }
+
+  /* Batch confirm box (onExecuteAllClick) — same shape/warning language as
+     .live-confirm-box above, plus the ordered list of what "YES" commits
+     to and, when the sum exceeds MAX_USD_PER_RUN, a hard block instead of
+     a warning (that cap is only enforced client-side for a batch — see
+     runAllLive's docstring). */
+  .live-confirm-list { max-height: 160px; overflow-y: auto; margin: 4px 0; font-size: 10.5px; }
+  .live-confirm-list-row { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; border-bottom: 1px dotted var(--border); }
+  .live-confirm-cap-block { color: var(--neg); font-weight: 600; margin-top: 6px; }
+
+  /* One row per operation inside the "Execute All" modal (runAllLive) —
+     label + its own nested stage tracker, so the whole queue is visible
+     up front and fills in top-to-bottom as each hop actually runs one at
+     a time (never two "active" rows at once — see the CSS comment on
+     .execute-all-btn for why). */
+  .exec-batch-row { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .exec-batch-row:last-child { border-bottom: none; }
+  .exec-batch-row-label { font-size: 11px; font-weight: 600; margin-bottom: 4px; display: flex; justify-content: space-between; gap: 8px; }
+  .exec-batch-row-label .exec-batch-amount { color: var(--muted); font-weight: 400; }
+  .exec-batch-row.queued { opacity: .55; }
+  .exec-batch-row.skipped { opacity: .55; }
+  .exec-batch-summary { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 11.5px; font-weight: 600; }
 
   /* Staged progress for a LIVE run (executor.py's on_stage callback,
      streamed by POST /api/test-hop — see runLiveHop). Each stage is
@@ -625,6 +676,8 @@
 
 <div id="operationsView">
   <div class="ops-summary" id="opsSummary"></div>
+  <button id="executeAllBtn" class="execute-all-btn" type="button" hidden></button>
+  <div id="executeAllMessage"></div>
   <div id="opsList"></div>
 </div>
 
@@ -1039,6 +1092,27 @@ function execOutcomeIcon(outcome) {
   return outcome === "ok" ? "✓" : outcome === "unconfirmed" ? "⏳" : "✕";
 }
 
+// A LIVE run's terminal failure message, "smoothly" integrated instead of
+// dumped as one raw line: a short summary always visible, the full
+// text tucked behind <details> so a long exception/traceback doesn't blow
+// up the row — the stage tracker right above it already shows the
+// step-by-step trail up to the point of failure (see createStageTracker),
+// this only cleans up the final message itself. Used by both a single
+// Execute/Run LIVE (runLiveHop) and Execute All (runAllLive).
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+function errorNoteHtml(message) {
+  const text = String(message || "unknown error");
+  const isLong = text.length > 140 || text.includes("\n");
+  if (!isLong) return `<div class="test-note test-status-error"><div class="error-summary">${escapeHtml(text)}</div></div>`;
+  const short = text.slice(0, 140).split("\n")[0] + "…";
+  return `<div class="test-note test-status-error">
+    <div class="error-summary">${escapeHtml(short)}</div>
+    <details><summary>Show details</summary><pre>${escapeHtml(text)}</pre></details>
+  </div>`;
+}
+
 // Renders the "stage" events above into #exec-stages as they stream in:
 // the previously-active stage freezes as done/error (spinner -> ✓/✕) and a
 // new spinner starts for the incoming one. `domain` ("onchain" vs
@@ -1214,8 +1288,8 @@ async function runLiveHop(resultEl, box, data, ctx) {
   } catch (e) {
     tracker.finish("error");
     execModalTitleEl.textContent = "Execution failed";
-    execModalBodyEl.insertAdjacentHTML("beforeend", `<div class="test-note test-status-error">${e.message}</div>`);
-    resultEl.innerHTML = `<div class="test-note test-status-error">${e.message}</div>`;
+    execModalBodyEl.insertAdjacentHTML("beforeend", errorNoteHtml(e.message));
+    resultEl.innerHTML = errorNoteHtml(e.message);
     finishExecIndicator("error", hopLabel);
     return;
   }
@@ -1224,8 +1298,8 @@ async function runLiveHop(resultEl, box, data, ctx) {
     tracker.finish("error");
     const msg = finalEvent ? finalEvent.error : "the connection ended before a result came back";
     execModalTitleEl.textContent = "Execution failed";
-    execModalBodyEl.insertAdjacentHTML("beforeend", `<div class="test-note test-status-error">${msg}</div>`);
-    resultEl.innerHTML = `<div class="test-note test-status-error">${msg}</div>`;
+    execModalBodyEl.insertAdjacentHTML("beforeend", errorNoteHtml(msg));
+    resultEl.innerHTML = errorNoteHtml(msg);
     finishExecIndicator("error", hopLabel);
     return;
   }
@@ -1302,13 +1376,17 @@ async function getExecutionStatus() {
   return executionStatus;
 }
 
-function executeButtonHtml(t, amount) {
-  return `<button class="execute-btn" data-dex="${t.dex}" data-chain="${t.chain}" data-stable="${t.stable}" data-to-stable="${t.toStable || ""}" data-hop-type="${t.hopType}" data-amount="${amount}" title="Move $${fmt(amount)} for real on ${t.dex} (${t.hopType} on ${t.chain})">Execute</button>`;
+function executeButtonHtml(t, amount, from, to) {
+  // data-from/data-to: the op's own `from`/`to` labels (see
+  // computeChosenOperations's _describe output) — NOT used for the single
+  // Execute button itself, only so runAllLive (Execute All) can find which
+  // later row depends on this one's output (its `to`) without re-deriving
+  // it from anywhere else.
+  return `<button class="execute-btn" data-dex="${t.dex}" data-chain="${t.chain}" data-stable="${t.stable}" data-to-stable="${t.toStable || ""}" data-hop-type="${t.hopType}" data-amount="${amount}" data-from="${from || ""}" data-to="${to || ""}" title="Move $${fmt(amount)} for real on ${t.dex} (${t.hopType} on ${t.chain})">Execute</button>`;
 }
 
 function bindExecuteButtons() {
   const buttons = [...document.querySelectorAll(".execute-btn")].filter(b => !b.dataset.bound);
-  if (!buttons.length) return;
   buttons.forEach(b => { b.dataset.bound = "1"; });
   getExecutionStatus().then(st => {
     buttons.forEach(btn => {
@@ -1324,7 +1402,32 @@ function bindExecuteButtons() {
       }
       btn.addEventListener("click", () => onExecuteClick(btn, st));
     });
+    // Re-derived every call (not just when `buttons` has fresh ones) since
+    // #opsList's own executable-row count doesn't change just because this
+    // particular call came from a different panel (e.g. a DEX Details hop).
+    updateExecuteAllButton(st);
   });
+}
+
+// "Execute All" only ever reflects rows in #opsList (the flat Chosen
+// Operations list, see renderOperations) — never the per-DEX "Test This
+// Edge"/journey hop buttons rendered elsewhere, which are exploratory, not
+// the solver's actual chosen plan.
+function updateExecuteAllButton(st) {
+  const btn = document.getElementById("executeAllBtn");
+  if (!btn) return;
+  const runnable = [...document.querySelectorAll("#opsList .execute-btn")].filter(b => !b.disabled);
+  if (!st.liveAllowed || runnable.length === 0) {
+    btn.hidden = true;
+    return;
+  }
+  const total = runnable.reduce((sum, b) => sum + parseFloat(b.dataset.amount), 0);
+  btn.hidden = false;
+  btn.textContent = `⚡ Execute All (${runnable.length} operation${runnable.length === 1 ? "" : "s"} · $${fmt(total)})`;
+  if (!btn.dataset.bound) {
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => onExecuteAllClick());
+  }
 }
 
 function executeResultEl(btn) {
@@ -1341,6 +1444,163 @@ function onExecuteClick(btn, st) {
   const resultEl = executeResultEl(btn);
   if (!resultEl) return;
   showLiveConfirm(resultEl, { resolvedAmountUsd: amount, walletAddress: st.walletAddress }, ctx);
+}
+
+// "Execute All" — runs every runnable row in #opsList back-to-back, ONE AT
+// A TIME, never concurrently: the operating wallet has no nonce-locking
+// (compass_test/chain_ops.py::_build_tx fetches a fresh "pending" nonce per
+// call, no lock/queue anywhere in wallet.py), so two on-chain submissions
+// in flight at once from this one wallet can collide. Reuses the exact
+// same POST /api/test-hop + NDJSON stage stream as a single Execute/Run
+// LIVE (runLiveHop) — the only new logic here is the queue, the ordering,
+// and skipping a row whose input depended on an earlier row that failed.
+const HOP_TYPE_ORDER = { Withdraw: 0, Swap: 1, Deposit: 2 };
+
+function gatherExecuteAllOps() {
+  return [...document.querySelectorAll("#opsList .execute-btn")]
+    .filter(b => !b.disabled)
+    .map(btn => ({
+      ctx: hopCtxFromButton(btn),
+      amount: parseFloat(btn.dataset.amount),
+      from: btn.dataset.from,
+      to: btn.dataset.to,
+      resultEl: executeResultEl(btn),
+    }))
+    // Withdraw before Deposit (a journey's Deposit needs the matching
+    // Withdraw's funds to have actually landed first) — the flat
+    // #opsList itself is sorted by $ amount (see computeChosenOperations),
+    // not causal order, so this can't just reuse DOM order.
+    .sort((a, b) => (HOP_TYPE_ORDER[a.ctx.hopType] ?? 9) - (HOP_TYPE_ORDER[b.ctx.hopType] ?? 9));
+}
+
+async function onExecuteAllClick() {
+  const msgEl = document.getElementById("executeAllMessage");
+  const st = await getExecutionStatus();
+  const ops = gatherExecuteAllOps();
+  if (!ops.length) return;
+
+  const total = ops.reduce((s, o) => s + o.amount, 0);
+  // The one cap the web path never enforces per-hop: executor._check_caps
+  // supports a cumulative `spent_so_far` against MAX_USD_PER_RUN, but
+  // hop_runner.run_single_hop (what POST /api/test-hop calls) never
+  // populates it, so every individual hop is only ever capped alone. A
+  // batch of many small hops could otherwise sail past MAX_USD_PER_RUN one
+  // server-approved hop at a time — block it here instead, client-side,
+  // before a single request goes out.
+  if (st.maxUsdPerRun !== undefined && total > st.maxUsdPerRun) {
+    msgEl.innerHTML = `<div class="live-confirm-box">
+      <div class="live-warning">⚠ Blocked</div>
+      <div class="live-confirm-cap-block">Total $${fmt(total)} across ${ops.length} operations exceeds COMPASS_TEST_MAX_USD_PER_RUN=$${fmt(st.maxUsdPerRun)}. Execute All won't start a batch above the run cap — raise it, or execute rows individually below.</div>
+      <div class="live-confirm-actions"><button class="cancel-live-btn" id="executeAllDismiss">Dismiss</button></div>
+    </div>`;
+    document.getElementById("executeAllDismiss").addEventListener("click", () => { msgEl.innerHTML = ""; });
+    return;
+  }
+
+  const rowsHtml = ops.map(o =>
+    `<div class="live-confirm-list-row"><span>${o.ctx.hopType} · ${o.ctx.dex} on ${o.ctx.chain}</span><span>$${fmt(o.amount)}</span></div>`
+  ).join("");
+  msgEl.innerHTML = `<div class="live-confirm-box">
+    <div class="live-warning">⚠ This will move real funds across ${ops.length} operations, one at a time — no undo</div>
+    <dl>
+      <dt>Total</dt><dd>$${fmt(total)}</dd>
+      <dt>Wallet</dt><dd style="word-break:break-all">${st.walletAddress || "n/a"}</dd>
+    </dl>
+    <div class="live-confirm-list">${rowsHtml}</div>
+    <input type="text" placeholder="Type YES to confirm" class="live-confirm-input" autocomplete="off">
+    <div class="live-confirm-actions">
+      <button class="confirm-run-btn" disabled>Confirm &amp; Execute All</button>
+      <button class="cancel-live-btn">Cancel</button>
+    </div>
+  </div>`;
+  const input = msgEl.querySelector(".live-confirm-input");
+  const confirmBtn = msgEl.querySelector(".confirm-run-btn");
+  input.addEventListener("input", () => { confirmBtn.disabled = input.value !== "YES"; });
+  msgEl.querySelector(".cancel-live-btn").addEventListener("click", () => { msgEl.innerHTML = ""; });
+  confirmBtn.addEventListener("click", () => { msgEl.innerHTML = ""; runAllLive(ops); });
+  input.focus();
+}
+
+async function runAllLive(ops) {
+  const modalStagesEl = openExecModal(`${ops.length} operations, one at a time`);
+
+  const rows = ops.map(o => {
+    const label = `${o.ctx.hopType} · ${o.ctx.dex} on ${o.ctx.chain} (${hopStablesLabel(o.ctx)})`;
+    const rowEl = document.createElement("div");
+    rowEl.className = "exec-batch-row queued";
+    rowEl.innerHTML = `<div class="exec-batch-row-label"><span>${label}</span><span class="exec-batch-amount">$${fmt(o.amount)}</span></div><div class="exec-batch-tracker"></div>`;
+    modalStagesEl.appendChild(rowEl);
+    return { ...o, label, rowEl, trackerEl: rowEl.querySelector(".exec-batch-tracker") };
+  });
+
+  let okCount = 0, unconfirmedCount = 0, failedCount = 0, skippedCount = 0, moved = 0;
+  const failedTo = new Set(); // `to` of every hop that ended in a real "error" — later rows reading from it get skipped
+
+  for (const row of rows) {
+    if (row.from && failedTo.has(row.from)) {
+      row.rowEl.classList.remove("queued");
+      row.rowEl.classList.add("skipped");
+      row.rowEl.insertAdjacentHTML("beforeend", `<div class="test-note">Skipped — depends on a failed hop above.</div>`);
+      if (row.resultEl) row.resultEl.innerHTML = `<div class="test-note">Skipped — depends on a failed hop above.</div>`;
+      skippedCount++;
+      continue;
+    }
+
+    row.rowEl.classList.remove("queued");
+    const tracker = createStageTracker(row.trackerEl, row.ctx.dex);
+    tracker.push("Sending the request…");
+
+    let finalEvent = null;
+    let networkError = null;
+    try {
+      const res = await fetch("/api/test-hop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...row.ctx, amount: row.amount, live: true, confirm: "YES" }),
+      });
+      if (!res.body) throw new Error(`test-hop failed (${res.status})`);
+      await readNdjsonStream(res, (event) => {
+        if (event.type === "stage") tracker.push(event.message, event.domain);
+        else finalEvent = event;
+      });
+    } catch (e) {
+      networkError = e.message;
+    }
+
+    if (networkError || !finalEvent || !finalEvent.ok) {
+      const msg = networkError || (finalEvent ? finalEvent.error : "the connection ended before a result came back");
+      tracker.finish("error");
+      row.rowEl.insertAdjacentHTML("beforeend", errorNoteHtml(msg));
+      if (row.resultEl) row.resultEl.innerHTML = errorNoteHtml(msg);
+      failedCount++;
+      if (row.to) failedTo.add(row.to);
+      continue;
+    }
+
+    const status = finalEvent.executed.status; // "ok" | "unconfirmed" | "error"
+    tracker.finish(status);
+    if (status === "ok") { okCount++; moved += row.amount; }
+    else if (status === "unconfirmed") { unconfirmedCount++; moved += row.amount; }
+    else { failedCount++; if (row.to) failedTo.add(row.to); }
+
+    if (row.resultEl) {
+      renderHopTestResult(row.resultEl, finalEvent, row.ctx, tracker.html());
+      if (status === "unconfirmed") addRecheckBalanceButton(row.resultEl, row.ctx.dex);
+    }
+  }
+
+  const outcome = failedCount > 0 ? "error" : unconfirmedCount > 0 ? "unconfirmed" : "ok";
+  execModalTitleEl.textContent = failedCount > 0 ? "Execute All — finished with errors" : "Execute All — complete";
+  modalStagesEl.insertAdjacentHTML("beforeend", `<div class="exec-batch-summary">
+    ${okCount} done${unconfirmedCount ? ` · ${unconfirmedCount} unconfirmed` : ""}${failedCount ? ` · ${failedCount} failed` : ""}${skippedCount ? ` · ${skippedCount} skipped` : ""} — $${fmt(moved)} moved
+  </div>`);
+  finishExecIndicator(outcome, `Execute All (${okCount + unconfirmedCount}/${ops.length} done)`);
+
+  // One refresh at the end, not one per hop — every hop just moved real
+  // funds, but the wallet/DEX balance panels only need the final state.
+  await getWalletBalances(true);
+  fetchWalletBalances();
+  if (selectedWalletChain) renderWalletDetails(selectedWalletChain);
 }
 
 // Deux estimations Dijkstra indépendantes (voir web_view.py:_computeDexPaths)
@@ -2626,7 +2886,7 @@ function renderOperations() {
       <span class="op-amount">${fmt(o.amount)}</span>
       <span class="op-cost">${fmt(o.cost)}</span>
       <span class="op-delay">${o.time ? o.time.toFixed(0) + "s" : "–"}</span>
-      <span class="op-exec">${o.testable ? executeButtonHtml(o.testable, o.amount) : ""}</span>
+      <span class="op-exec">${o.testable ? executeButtonHtml(o.testable, o.amount, o.from, o.to) : ""}</span>
       ${o.testable ? `<div class="op-exec-result"><div class="hop-test-result"></div></div>` : ""}
     </div>`).join("");
   bindExecuteButtons();

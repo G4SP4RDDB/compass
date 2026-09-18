@@ -243,7 +243,7 @@ def summary(days: int = 30, live_only: bool = False) -> dict[str, Any]:
             sum(gas_cost_usd) AS total_gas_cost_usd,
             sum(fee_cost_usd) AS total_fee_cost_usd,
             sum(slippage_cost_usd) AS total_slippage_cost_usd,
-            avg((status = 'ok')::int) FILTER (WHERE live) AS success_rate,
+            avg((status = 'ok')::int) FILTER (WHERE live)::float AS success_rate,
             count(*) FILTER (WHERE live) AS live_operation_count
         FROM rebalancing_operations
         WHERE started_at >= now() - make_interval(days => %(days)s)
