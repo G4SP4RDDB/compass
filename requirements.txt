@@ -5,6 +5,7 @@ matplotlib
 ortools==9.15.6755
 pytest
 flask
+psycopg[binary]
 web3==6.20.4
 eth-account==0.11.3
 eth-utils==4.1.1

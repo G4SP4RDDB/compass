@@ -69,6 +69,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory, stream
 from compass_test import balances as test_balances
 from compass_test import config as test_config
 from compass_test import executor as test_executor
+from compass_test import metrics_db
 from compass_test import reporter as test_reporter
 from compass_test.hop_runner import HopValidationError, run_single_hop
 from compass_test.models import HopType
@@ -91,6 +92,7 @@ from graph.structures.DEXes import Chain
 from graph.solver import graphSolve
 from graph.urgency import TimeWeightParams
 from main import buildAndSolveGraph
+from visualization.dex_branding import DEX_BRANDING
 from visualization.graph_view import renderGraph
 from visualization.web_view import graphToDict, renderGraphHtml, writeOperationsText
 
@@ -339,6 +341,75 @@ def getTestRun(run_id: str):
     except FileNotFoundError:
         return jsonify({"error": f"no such run {run_id!r}"}), 404
     return jsonify(report.to_dict())
+
+
+def _metricsQueryArgs() -> tuple[int, bool]:
+    days = request.args.get("days", default=30, type=int)
+    live_only = request.args.get("live", default="false") == "true"
+    return days, live_only
+
+
+@app.get("/metrics")
+def metricsDashboard():
+    """Serves the standalone metrics dashboard (Chart.js via CDN, unlike
+    graph.html which stays dependency-free) — see visualization/web/
+    metrics_dashboard.html. It fetches its data from the /api/metrics/*
+    routes below, all backed by TimescaleDB (see compass_test/metrics_db.py),
+    which is additive to the JSON reports on disk (source of truth)."""
+    return send_from_directory(ROOT / "visualization" / "web", "metrics_dashboard.html")
+
+
+@app.get("/api/dex-branding")
+def getDexBranding():
+    """{dexName: brandColor} only (no logos — those are large base64 blobs
+    only graph_template.html needs) so the dashboard's per-DEX charts use
+    the same colors as the graph view's nodes (see dex_branding.py)."""
+    return jsonify({name: branding["color"] for name, branding in DEX_BRANDING.items()})
+
+
+@app.get("/api/metrics/summary")
+def getMetricsSummary():
+    days, live_only = _metricsQueryArgs()
+    try:
+        return jsonify(metrics_db.summary(days=days, live_only=live_only))
+    except Exception as exc:  # noqa: BLE001 - DB down/unreachable must not crash the server
+        return jsonify({"error": f"metrics DB unavailable: {exc}"}), 503
+
+
+@app.get("/api/metrics/daily-counts")
+def getMetricsDailyCounts():
+    days, live_only = _metricsQueryArgs()
+    try:
+        return jsonify(metrics_db.daily_counts(days=days, live_only=live_only))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"metrics DB unavailable: {exc}"}), 503
+
+
+@app.get("/api/metrics/cost-over-time")
+def getMetricsCostOverTime():
+    days, live_only = _metricsQueryArgs()
+    try:
+        return jsonify(metrics_db.cost_over_time(days=days, live_only=live_only))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"metrics DB unavailable: {exc}"}), 503
+
+
+@app.get("/api/metrics/delay-over-time")
+def getMetricsDelayOverTime():
+    days, live_only = _metricsQueryArgs()
+    try:
+        return jsonify(metrics_db.delay_over_time(days=days, live_only=live_only))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"metrics DB unavailable: {exc}"}), 503
+
+
+@app.get("/api/metrics/by-dex")
+def getMetricsByDex():
+    days, live_only = _metricsQueryArgs()
+    try:
+        return jsonify(metrics_db.by_dex(days=days, live_only=live_only))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"metrics DB unavailable: {exc}"}), 503
 
 
 @app.get("/api/wallet-balances")

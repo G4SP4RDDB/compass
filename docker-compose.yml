@@ -1,0 +1,31 @@
+# Local TimescaleDB for the /metrics rebalancing-metrics dashboard (see
+# compass_test/metrics_db.py, visualization/server.py). Dev-only: JSON
+# reports under compass_test/reports/ stay the durable source of truth,
+# this DB is an additive queryable projection — if the container isn't
+# running, report saving and the rest of the app still work fine (see
+# reporter.py's best-effort write-path hook).
+#
+# Usage: docker compose up -d
+services:
+  timescaledb:
+    image: timescale/timescaledb:2.17.2-pg16
+    container_name: compass_timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: compass_metrics
+      POSTGRES_USER: compass
+      POSTGRES_PASSWORD: compass_dev_only
+    ports:
+      # 5433 host-side to avoid clashing with any local Postgres on 5432.
+      - "5433:5432"
+    volumes:
+      - compass_timescale_data:/var/lib/postgresql/data
+      - ./compass_test/sql/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U compass -d compass_metrics"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  compass_timescale_data:

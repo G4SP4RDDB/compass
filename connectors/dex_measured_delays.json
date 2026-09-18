@@ -36,18 +36,20 @@
   "Aster": {
     "BSC": {
       "withdrawDelaySeconds": {
-        "lastMeasuredAt": 1788806391.8077362,
+        "lastMeasuredAt": 1789399363.11826,
         "maxSeconds": 7.931287050247192,
-        "meanSeconds": 7.931287050247192,
-        "minSeconds": 7.931287050247192,
-        "n": 1,
+        "meanSeconds": 6.317440509796143,
+        "minSeconds": 4.703593969345093,
+        "n": 2,
         "sampleRunIds": [
-          "20260907T183951Z"
+          "20260907T183951Z",
+          "20260914T152243Z"
         ],
         "samplesSeconds": [
-          7.931287050247192
+          7.931287050247192,
+          4.703593969345093
         ],
-        "stdSeconds": 0.0
+        "stdSeconds": 2.2823236650947742
       }
     }
   },

@@ -93,6 +93,15 @@ OPERATING_WALLET_KEY_VAR = os.getenv("COMPASS_TEST_WALLET_KEY_VAR", "")
 # key at signing time there (see wallet.OperatingWallet.address).
 OPERATING_WALLET_ADDRESS = os.getenv("COMPASS_TEST_WALLET_ADDRESS")
 
+# --- Metrics dashboard (TimescaleDB, see ../docker-compose.yml) ---------
+# reporter.save_report() best-effort projects every report into this DB
+# (see metrics_db.py) alongside the JSON files above, which stay the
+# source of truth — an unreachable/misconfigured DB never blocks a report
+# from saving. Default points at the local `docker compose up -d` service.
+TIMESCALE_DB_URL = os.getenv(
+    "TIMESCALE_DB_URL", "postgresql://compass:compass_dev_only@localhost:5433/compass_metrics"
+)
+
 # Hardcoded deposit addresses, one env var per (DEX, chain) — the PRIMARY
 # source for a CEX connector's deposit address (see runners/mexc.py::
 # build_deposit_tx), not merely a cross-check: MEXC's own live

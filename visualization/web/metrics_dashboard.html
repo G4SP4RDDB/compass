@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Compass — Metrics</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  /* Same token set as graph_template.html's :root — kept as a literal copy
+     (not a shared file) so this page stays a standalone static file. */
+  :root {
+    --bg: #f5f6f8;
+    --panel-bg: #ffffff;
+    --text: #1a1d21;
+    --muted: #6b7280;
+    --border: #dde1e6;
+    --accent: #2563eb;
+    --pos: #2fae5e;
+    --neg: #e05252;
+    --grid: #e6e8eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --panel-bg: #1c1f24;
+      --text: #e8eaed;
+      --muted: #9aa0a8;
+      --border: #33383f;
+      --accent: #5b9bff;
+      --pos: #3ecb72;
+      --neg: #ff6b6b;
+      --grid: #2a2e34;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; min-height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  header {
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap;
+    background: var(--panel-bg);
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header a { font-size: 12px; color: var(--accent); text-decoration: none; }
+  header a:hover { text-decoration: underline; }
+
+  #banner {
+    display: none; margin: 12px 16px 0; padding: 8px 12px; border-radius: 6px;
+    background: color-mix(in srgb, var(--neg) 15%, var(--panel-bg));
+    border: 1px solid var(--neg); color: var(--text); font-size: 13px;
+  }
+
+  #filters {
+    display: flex; align-items: center; gap: 10px; padding: 12px 16px 0;
+    font-size: 12px; color: var(--muted);
+  }
+  #filters select, #filters label {
+    font-size: 12px; color: var(--text);
+  }
+  #filters select {
+    background: var(--panel-bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 5px; padding: 3px 6px;
+  }
+
+  #tiles {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px; padding: 12px 16px;
+  }
+  .tile {
+    background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .tile .label { font-size: 12px; color: var(--muted); }
+  .tile .value { font-size: 22px; font-weight: 600; margin-top: 4px; }
+
+  #charts {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    gap: 12px; padding: 0 16px 16px;
+  }
+  .chart-card {
+    background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .chart-card h2 { font-size: 13px; font-weight: 600; margin: 0 0 8px; }
+  .chart-card canvas { max-height: 260px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Compass — Metrics</h1>
+  <a href="/">← Graph Viewer</a>
+</header>
+
+<div id="banner"></div>
+
+<div id="filters">
+  <label>Window
+    <select id="daysSelect">
+      <option value="7">Last 7 days</option>
+      <option value="30" selected>Last 30 days</option>
+      <option value="90">Last 90 days</option>
+    </select>
+  </label>
+  <label><input type="checkbox" id="liveOnly" /> Live runs only</label>
+</div>
+
+<div id="tiles">
+  <div class="tile"><div class="label">Rebalancing hops</div><div class="value" id="tileHopCount">—</div></div>
+  <div class="tile"><div class="label">Runs</div><div class="value" id="tileRunCount">—</div></div>
+  <div class="tile"><div class="label">Total cost</div><div class="value" id="tileTotalCost">—</div></div>
+  <div class="tile"><div class="label">Avg delay</div><div class="value" id="tileAvgDelay">—</div></div>
+  <div class="tile"><div class="label">Success rate</div><div class="value" id="tileSuccessRate">—</div></div>
+</div>
+
+<div id="charts">
+  <div class="chart-card">
+    <h2>Rebalancings per day</h2>
+    <canvas id="dailyCountsChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h2>Rebalancing cost over time (USD)</h2>
+    <canvas id="costChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h2>Rebalancing delay over time (s)</h2>
+    <canvas id="delayChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h2>Rebalancing hops by DEX</h2>
+    <canvas id="byDexChart"></canvas>
+  </div>
+</div>
+
+<script>
+const root = getComputedStyle(document.documentElement);
+const cssVar = (name) => root.getPropertyValue(name).trim();
+const COLORS = {
+  accent: cssVar('--accent'),
+  text: cssVar('--text'),
+  muted: cssVar('--muted'),
+  grid: cssVar('--grid'),
+  panel: cssVar('--panel-bg'),
+};
+
+Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif";
+Chart.defaults.color = COLORS.muted;
+Chart.defaults.borderColor = COLORS.grid;
+
+const axisOpts = {
+  grid: { color: COLORS.grid, drawTicks: false },
+  ticks: { color: COLORS.muted },
+  border: { display: false },
+};
+
+function fmtUsd(v) {
+  if (v === null || v === undefined) return '—';
+  return '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+function fmtSeconds(v) {
+  if (v === null || v === undefined) return '—';
+  return Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 }) + 's';
+}
+function fmtPct(v) {
+  if (v === null || v === undefined) return '—';
+  return (Number(v) * 100).toFixed(1) + '%';
+}
+function dayLabel(iso) {
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+let dexBranding = {};
+let charts = {};
+let byDexRaw = [];
+
+function makeLineChart(canvasId, label, valueKey, formatter) {
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  return new Chart(ctx, {
+    type: 'line',
+    data: { labels: [], datasets: [{
+      label,
+      data: [],
+      borderColor: COLORS.accent,
+      backgroundColor: COLORS.accent + '1a', // ~10% opacity wash
+      borderWidth: 2,
+      pointRadius: 4,
+      pointBorderWidth: 2,
+      pointBorderColor: COLORS.panel,
+      pointBackgroundColor: COLORS.accent,
+      tension: 0.25,
+      fill: true,
+    }] },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: { label: (item) => `${label}: ${formatter(item.parsed.y)}` },
+        },
+      },
+      scales: { x: axisOpts, y: { ...axisOpts, beginAtZero: true } },
+    },
+  });
+}
+
+function makeBarChart(canvasId, label, formatter) {
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  return new Chart(ctx, {
+    type: 'bar',
+    data: { labels: [], datasets: [{
+      label,
+      data: [],
+      backgroundColor: COLORS.accent,
+      borderRadius: 4,
+      barThickness: 22,
+    }] },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (item) => `${label}: ${formatter(item.parsed.y)}` } },
+      },
+      scales: { x: axisOpts, y: { ...axisOpts, beginAtZero: true } },
+    },
+  });
+}
+
+function makeDexChart(canvasId) {
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  return new Chart(ctx, {
+    type: 'bar',
+    data: { labels: [], datasets: [{
+      label: 'Rebalancing hops',
+      data: [],
+      backgroundColor: [],
+      borderRadius: 4,
+      barThickness: 22,
+    }] },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) => {
+              const d = byDexRaw[item.dataIndex] || {};
+              return [`Hops: ${d.hop_count}`, `Total cost: ${fmtUsd(d.total_cost_usd)}`, `Avg delay: ${fmtSeconds(d.avg_time_seconds)}`];
+            },
+          },
+        },
+      },
+      scales: { x: { ...axisOpts, beginAtZero: true }, y: axisOpts },
+    },
+  });
+}
+
+function queryParams() {
+  const days = document.getElementById('daysSelect').value;
+  const live = document.getElementById('liveOnly').checked;
+  return `days=${encodeURIComponent(days)}&live=${live}`;
+}
+
+async function fetchJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `${url} -> HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+function setBanner(message) {
+  const el = document.getElementById('banner');
+  if (!message) { el.style.display = 'none'; return; }
+  el.textContent = message;
+  el.style.display = 'block';
+}
+
+async function refresh() {
+  const qs = queryParams();
+  try {
+    const [summary, daily, cost, delay, byDex] = await Promise.all([
+      fetchJson(`/api/metrics/summary?${qs}`),
+      fetchJson(`/api/metrics/daily-counts?${qs}`),
+      fetchJson(`/api/metrics/cost-over-time?${qs}`),
+      fetchJson(`/api/metrics/delay-over-time?${qs}`),
+      fetchJson(`/api/metrics/by-dex?${qs}`),
+    ]);
+    setBanner(null);
+
+    document.getElementById('tileHopCount').textContent = summary.hop_count ?? '0';
+    document.getElementById('tileRunCount').textContent = summary.run_count ?? '0';
+    document.getElementById('tileTotalCost').textContent = fmtUsd(summary.total_cost_usd);
+    document.getElementById('tileAvgDelay').textContent = fmtSeconds(summary.avg_time_seconds);
+    document.getElementById('tileSuccessRate').textContent = fmtPct(summary.success_rate);
+
+    charts.daily.data.labels = daily.map((r) => dayLabel(r.day));
+    charts.daily.data.datasets[0].data = daily.map((r) => r.hop_count);
+    charts.daily.update();
+
+    charts.cost.data.labels = cost.map((r) => dayLabel(r.day));
+    charts.cost.data.datasets[0].data = cost.map((r) => r.total_cost_usd);
+    charts.cost.update();
+
+    charts.delay.data.labels = delay.map((r) => dayLabel(r.day));
+    charts.delay.data.datasets[0].data = delay.map((r) => r.avg_time_seconds);
+    charts.delay.update();
+
+    byDexRaw = byDex;
+    charts.byDex.data.labels = byDex.map((r) => r.dex);
+    charts.byDex.data.datasets[0].data = byDex.map((r) => r.hop_count);
+    charts.byDex.data.datasets[0].backgroundColor = byDex.map((r) => dexBranding[r.dex] || COLORS.accent);
+    charts.byDex.update();
+  } catch (err) {
+    setBanner(`Metrics unavailable: ${err.message}. Is the TimescaleDB container running (docker compose up -d)?`);
+  }
+}
+
+async function init() {
+  try {
+    dexBranding = await fetchJson('/api/dex-branding');
+  } catch (err) {
+    dexBranding = {};
+  }
+  charts.daily = makeBarChart('dailyCountsChart', 'Hops', (v) => `${v}`);
+  charts.cost = makeLineChart('costChart', 'Cost', fmtUsd);
+  charts.delay = makeLineChart('delayChart', 'Avg delay', fmtSeconds);
+  charts.byDex = makeDexChart('byDexChart');
+
+  document.getElementById('daysSelect').addEventListener('change', refresh);
+  document.getElementById('liveOnly').addEventListener('change', refresh);
+
+  await refresh();
+  setInterval(refresh, 30000);
+}
+
+init();
+</script>
+</body>
+</html>
