@@ -18,6 +18,14 @@
     python -m compass_test.cli run-hop --hop swap --chain ARBITRUM --stable USDC --to-stable USDT --amount 1
     python -m compass_test.cli run-hop --hop swap --chain BSC --stable USDT --to-stable USDC --amount 1 --live
 
+    # Bridge USDT cross-chain through Aden's own internal deposit/withdraw
+    # ledger (no --dex: a bridge is always Aden, see runners/aden.py). Dry
+    # run simulates the deposit leg's gas only (the withdraw leg's fee/time
+    # is live-only, same as a standalone Withdraw hop); --live runs both
+    # legs for real, back to back:
+    python -m compass_test.cli run-hop --hop bridge --chain ARBITRUM --stable USDT --to-chain BSC --amount 11
+    python -m compass_test.cli run-hop --hop bridge --chain ARBITRUM --stable USDT --to-chain BSC --amount 11 --live
+
     # Rebuild the measured withdraw/deposit delays (connectors/
     # dex_measured_delays.json) from every live run in reports/ and print
     # them next to the configured values — see calibration.py. Also done
@@ -67,6 +75,8 @@ def _cmd_list_hops(_args: argparse.Namespace) -> int:
                 minLabel = f"  min withdraw=${h.minWithdrawUsd:.2f}"
             elif h.hopType == HopType.DEPOSIT:
                 minLabel = f"  min deposit=${h.minDepositUsd:.2f}"
+            elif h.hopType == HopType.BRIDGE:
+                minLabel = f"  ->{h.toChain}"
             else:
                 minLabel = f"  {h.stable}->{h.toStable}"
             print(
@@ -111,7 +121,12 @@ def _confirm_live_run(planned_journey, amount_usd: float, wallet_address: str) -
           f"run=${config.MAX_USD_PER_RUN:.2f})")
     print(f"Operating wallet: {wallet_address}")
     for h in planned_journey.hops:
-        detail = f" ({h.stable} -> {h.toStable})" if h.hopType == HopType.SWAP else ""
+        if h.hopType == HopType.SWAP:
+            detail = f" ({h.stable} -> {h.toStable})"
+        elif h.hopType == HopType.BRIDGE:
+            detail = f" -> {h.toChain}"
+        else:
+            detail = ""
         print(f"  {h.hopType.value:8s} {h.dex:16s} on {h.chain}{detail}")
     print("=" * 70)
     typed = input("Type YES (all caps) to proceed: ")
@@ -192,7 +207,8 @@ def _confirm_live_hop(planned, amount_usd: float, wallet_address: str) -> bool:
     print("LIVE RUN — real funds will move")
     print("=" * 70)
     stables = f"{planned.stable} -> {planned.toStable}" if planned.hopType == HopType.SWAP else planned.stable
-    print(f"Hop            : {planned.hopType.value} {planned.dex} on {planned.chain} ({stables})")
+    chains = f"{planned.chain} -> {planned.toChain}" if planned.hopType == HopType.BRIDGE else planned.chain
+    print(f"Hop            : {planned.hopType.value} {planned.dex} on {chains} ({stables})")
     print(f"Test amount    : ${amount_usd:.2f} (caps: hop=${config.MAX_USD_PER_HOP:.2f}, "
           f"run=${config.MAX_USD_PER_RUN:.2f})")
     print(f"Operating wallet: {wallet_address}")
@@ -201,7 +217,12 @@ def _confirm_live_hop(planned, amount_usd: float, wallet_address: str) -> bool:
     return typed == "YES"
 
 
-_HOP_TYPE_BY_ARG = {"withdraw": HopType.WITHDRAW, "deposit": HopType.DEPOSIT, "swap": HopType.SWAP}
+_HOP_TYPE_BY_ARG = {
+    "withdraw": HopType.WITHDRAW,
+    "deposit": HopType.DEPOSIT,
+    "swap": HopType.SWAP,
+    "bridge": HopType.BRIDGE,
+}
 
 
 def _cmd_run_hop(args: argparse.Namespace) -> int:
@@ -210,14 +231,18 @@ def _cmd_run_hop(args: argparse.Namespace) -> int:
     if hopType == HopType.SWAP and not args.to_stable:
         print("--hop swap needs --to-stable (the stable to buy; --stable is the one sold)", file=sys.stderr)
         return 1
-    if hopType != HopType.SWAP and not args.dex:
+    if hopType == HopType.BRIDGE and not args.to_chain:
+        print("--hop bridge needs --to-chain (the withdraw chain; --chain is the deposit chain)", file=sys.stderr)
+        return 1
+    if hopType not in (HopType.SWAP, HopType.BRIDGE) and not args.dex:
         print(f"--hop {args.hop} needs --dex", file=sys.stderr)
         return 1
 
     try:
         result = run_single_hop(
             args.dex or "", hopType, args.chain, args.stable,
-            amount_usd=args.amount, live=args.live, confirm=confirm, to_stable_name=args.to_stable,
+            amount_usd=args.amount, live=args.live, confirm=confirm,
+            to_stable_name=args.to_stable, to_chain_name=args.to_chain,
         )
     except HopValidationError as exc:
         print(str(exc), file=sys.stderr)
@@ -276,13 +301,14 @@ def build_parser() -> argparse.ArgumentParser:
     runHop = sub.add_parser(
         "run-hop",
         help="Run (or dry-run) ONE hop directly, independent of any journey: a DEX's Withdraw or Deposit, "
-        "or a same-chain USDC<->USDT Swap through CoW Swap",
+        "a same-chain USDC<->USDT Swap through CoW Swap, or a cross-chain USDT Bridge through Aden",
     )
-    runHop.add_argument("--dex", default=None, help="The DEX (Withdraw/Deposit only — a Swap has none)")
+    runHop.add_argument("--dex", default=None, help="The DEX (Withdraw/Deposit only — a Swap/Bridge has none)")
     runHop.add_argument("--hop", required=True, choices=sorted(_HOP_TYPE_BY_ARG))
-    runHop.add_argument("--chain", required=True, choices=[c.name for c in Chain])
+    runHop.add_argument("--chain", required=True, choices=[c.name for c in Chain], help="For a Bridge: the deposit chain")
     runHop.add_argument("--stable", required=True, choices=[s.name for s in Stable], help="The stable moved (for a Swap: the one SOLD)")
     runHop.add_argument("--to-stable", default=None, choices=[s.name for s in Stable], help="Swap only: the stable BOUGHT")
+    runHop.add_argument("--to-chain", default=None, choices=[c.name for c in Chain], help="Bridge only: the withdraw chain")
     runHop.add_argument(
         "--amount",
         type=float,

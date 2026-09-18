@@ -174,7 +174,7 @@ def _aden_ca_bundle_path() -> str:
     combined.write_text(Path(certifi.where()).read_text() + "\n" + _INTERMEDIATE_CA_PATH.read_text())
     return str(combined)
 
-_CHAIN_NAME = {Chain.BSC: "bsc"}
+_CHAIN_NAME = {Chain.BSC: "bsc", Chain.ARBITRUM: "arbitrum"}
 _ASSET_BY_STABLE = {Stable.USDT: "USDT"}
 
 # Observed literal value in the real login request's `source_type` field —
@@ -191,7 +191,15 @@ def _trim_amount(amount_usd: float) -> str:
 
 class AdenConnector(DexConnector):
     name = "Aden"
-    supported_chains = frozenset({Chain.BSC})
+    # BSC confirmed live both ways (2026-09-07, see module docstring).
+    # Arbitrum deposit is the same generic build_erc20_transfer_tx path MEXC/
+    # BSC already use — just a different expected_deposit_address env var
+    # (COMPASS_TEST_EXPECTED_DEPOSIT_ADDRESS_ADEN_ARBITRUM). Arbitrum
+    # WITHDRAW is untested: withdraw-min-limit already reports a live $10.50
+    # floor for it, but no real Arbitrum sign_data/submit call has ever been
+    # made — treat a first live Arbitrum withdraw with the same suspicion
+    # the original BSC one needed (see the "CONFIRMED LIVE" section above).
+    supported_chains = frozenset({Chain.BSC, Chain.ARBITRUM})
     supported_stables = frozenset({Stable.USDT})
 
     def __init__(self):

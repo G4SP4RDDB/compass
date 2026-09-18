@@ -19,6 +19,15 @@ class HopType(str, Enum):
     # `dex` on such a hop is the venue name (connectors.cowswap.
     # COWSWAP_VENUE_NAME), `stable` the sold stable, `toStable` the bought one.
     SWAP = "Swap"
+    # Cross-chain same-stable move (WalletNode -> WalletNode, EdgeType.Bridge)
+    # via Aden's internal deposit/withdraw ledger — see runners/aden.py. `dex`
+    # is always "Aden" (the only bridge protocol modeled, graph.structures.
+    # bridges.BridgeProtocol.ADEN_INTERNAL), `chain` the deposit chain,
+    # `toChain` the withdraw chain. Executed as a real deposit-then-withdraw
+    # pair (executor._run_bridge) but reported as ONE hop, mirroring how the
+    # graph model already treats it as a single combined-cost/time edge
+    # (costing.computeCost/computeBridgeDelay).
+    BRIDGE = "Bridge"
 
 
 @dataclass
@@ -34,8 +43,12 @@ class PlannedHop:
     estimatedCostUsd: float
     estimatedTimeSeconds: float
     # SWAP hops only: the stable BOUGHT (`stable` above is the one sold).
-    # "" for Withdraw/Deposit — one stable in, same stable out.
+    # "" for Withdraw/Deposit/Bridge — one stable in, same stable out.
     toStable: str = ""
+    # BRIDGE hops only: the destination chain (`chain` above is the deposit/
+    # source chain). "" for every other hop type — one chain in, same chain
+    # out.
+    toChain: str = ""
     # What the hand-typed config (Config tab / DEFAULT_*) says for this
     # edge, regardless of any measurement — costing.computeConfiguredDelay.
     # estimatedTimeSeconds above is what the solver actually uses: equal to
@@ -82,6 +95,7 @@ class PlannedHop:
             estimatedCostUsd=d["estimatedCostUsd"],
             estimatedTimeSeconds=d["estimatedTimeSeconds"],
             toStable=d.get("toStable", ""),
+            toChain=d.get("toChain", ""),
             configuredTimeSeconds=d.get("configuredTimeSeconds"),
             timeSource=d.get("timeSource", "configured"),
             solvedFlowUsd=d.get("solvedFlowUsd", 0.0),

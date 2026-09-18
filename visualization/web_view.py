@@ -311,6 +311,33 @@ def _dexNodeDict(dex: DEX, sourceNodeId: int) -> dict[str, Any]:
     }
 
 
+def _swapNodeDict(graph: Graph) -> dict[str, Any] | None:
+    """Résumé JSON-sérialisable du venue de swap (CoW Swap aujourd'hui), UN
+    SEUL node dessiné côté frontend pour toutes les chains confondues — par
+    opposition à _dexNodeDict, un DEX par node : un swap n'a pas de node
+    dédié dans le graphe bas niveau (voir Graph._linkSwaps, une simple edge
+    WalletNode -> WalletNode par paire de stables sur une même chain), donc
+    ce dict est construit directement depuis les edges EdgeType.Swap plutôt
+    que depuis un SourceNode. `chains` liste les chains où CoW Swap est à la
+    fois traversé par une edge Swap dans CE graphe ET réellement câblé (voir
+    _SWAP_TESTABLE_CHAINS = BSC/Arbitrum, compass_test/runners/cowswap.py) —
+    Graph._linkSwaps crée une edge Swap sur TOUTE chain sans filtrer (voir
+    Graph._buildWalletNodes), donc sans cette intersection ce node afficherait
+    des chains où CoW Swap n'est en réalité pas utilisable. None si
+    l'intersection est vide (rien à dessiner)."""
+    chains = {cast(WalletNode, edge.u).chain for edge in graph.edgeList if edge.type == EdgeType.Swap}
+    chains &= _SWAP_TESTABLE_CHAINS
+    if not chains:
+        return None
+    branding = DEX_BRANDING.get(COWSWAP_VENUE_NAME, {})
+    return {
+        "name": COWSWAP_VENUE_NAME,
+        "chains": sorted(c.name for c in chains),
+        "logo": branding.get("logo"),
+        "brandColor": branding.get("color"),
+    }
+
+
 def _measuredDelayDict(measured: MeasuredDelay | None) -> dict[str, Any] | None:
     if measured is None:
         return None
@@ -461,6 +488,8 @@ def graphToDict(graph: Graph, timeWeightParams: TimeWeightParams | None = None) 
     """Point d'entrée unique assemblant tout ce que graph_template.html
     consomme (voir renderGraphHtml) :
       - dexNodes : un node par DEX à dessiner ;
+      - swapNode : LE node "swap" (un seul, toutes chains confondues, voir
+        _swapNodeDict) — None si le graphe n'a aucune edge Swap ;
       - paths : estimation Dijkstra tous-DEX-vers-tous-DEX (informatif) ;
       - operations : le plan réellement choisi par le solveur, agrégé par
         arête (voir computeChosenOperations) ;
@@ -493,6 +522,7 @@ def graphToDict(graph: Graph, timeWeightParams: TimeWeightParams | None = None) 
     )
     return {
         "dexNodes": dexNodes,
+        "swapNode": _swapNodeDict(graph),
         "paths": paths,
         "operations": computeChosenOperations(graph),
         "journeys": journeys,

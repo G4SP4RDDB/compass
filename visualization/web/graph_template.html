@@ -351,9 +351,16 @@
   .exec-stage { display: flex; align-items: flex-start; gap: 6px; font-size: 10.5px; color: var(--muted); }
   .exec-stage.done { color: var(--text); }
   .exec-stage.error { color: var(--neg); }
+  .exec-stage.pending { color: var(--chosen); }
   .exec-stage-icon { width: 13px; height: 13px; flex-shrink: 0; margin-top: 1px; display: flex; align-items: center; justify-content: center; font-size: 10px; line-height: 1; }
   .exec-stage.done .exec-stage-icon { color: var(--pos); font-weight: 700; }
   .exec-stage.error .exec-stage-icon { color: var(--neg); font-weight: 700; }
+  /* "pending": the on-chain leg genuinely finished but the venue's own
+     balance never reflected it within the wait window (executed.status ==
+     "unconfirmed") — deliberately NOT the same green "done" as a real
+     confirmation. Only a live balance change on the venue earns that; see
+     executor.py's poll loop in _run_deposit/_run_withdraw. */
+  .exec-stage.pending .exec-stage-icon { color: var(--chosen); font-weight: 700; }
   .exec-stage-tag {
     flex-shrink: 0; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
     padding: 1px 5px; border-radius: 3px; margin-top: .5px;
@@ -419,6 +426,18 @@
   #execMiniIndicator:hover { border-color: var(--accent); }
   #execMiniIndicator.done { color: var(--pos); border-color: var(--pos); }
   #execMiniIndicator.error { color: var(--neg); border-color: var(--neg); }
+  #execMiniIndicator.pending { color: var(--chosen); border-color: var(--chosen); }
+
+  /* "Check again" for an unconfirmed deposit/withdraw — see
+     checkDexBalanceAgain, reusing the same GET /api/dex-balances/<name>
+     the DEX Details panel already uses, so re-checking doesn't require
+     re-running the whole hop. */
+  .exec-recheck-btn {
+    margin-top: 6px; font-size: 10px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--chosen);
+    background: transparent; color: var(--chosen); cursor: pointer; font-weight: 600;
+  }
+  .exec-recheck-btn:hover { background: var(--chosen); color: #fff; }
+  .exec-recheck-result { margin-top: 4px; font-size: 10.5px; color: var(--muted); }
 
   /* Une couleur par type d'opération (voir --type-* dans :root et
      web_view.py:_hopKind) : le badge ET le liseré de la ligne portent la
@@ -610,24 +629,11 @@
 
 <div id="configView">
   <p class="config-hint">
-    Frais et délais opérationnels de dépôt/retrait par DEX ET PAR CHAIN, utilisés
-    par le solveur (voir costing.computeCost/computeDelay). "Min withdraw"/"Min
-    deposit" sont des PLANCHERS, pas des coûts : le plus petit montant qu'un
-    retrait/dépôt réel sur ce DEX/chain accepte (ex: MEXC refuse un retrait en
-    dessous de $0.50 en USDT sur BSC — "min deposit" par défaut à $0, aucun DEX
-    ici n'en impose un connu). C'est aussi ce que <code>compass_test</code>
-    utilise pour choisir le montant d'un test de route : max(min deposit de la
-    destination, min withdraw de la source) — voir compass_test/README.md —
-    plutôt que les déséquilibres de démo qui peuvent être bien plus gros que
-    n'importe quel solde réel. Les modifications sont enregistrées directement
-    dans <code>connectors/dex_operational_params.json</code> côté serveur dès
-    que vous quittez un champ — inutile d'avoir accès au code pour les changer.
-    Les <strong>délais</strong> saisis ici ne servent que de repli : dès qu'au
-    moins un run LIVE de ce hop a réussi (onglet Test Results / bouton "Test
-    This Edge"), le solveur utilise la <span class="cfg-measured-active">moyenne
-    mesurée</span> des 10 derniers runs (affichée sous le champ, avec n et
-    l'écart-type), lue depuis <code>connectors/dex_measured_delays.json</code>.
-    Un n faible est signalé en rouge : la moyenne repose sur 1 ou 2 runs.
+    Frais/délais de dépôt-retrait par DEX et par chain. "Min withdraw/deposit" =
+    plancher accepté, pas un coût. Sauvegardé automatiquement. Les délais ne
+    sont qu'un repli : dès qu'un run live réussit, le solveur passe à la
+    <span class="cfg-measured-active">moyenne mesurée</span> (n, écart-type) —
+    n faible signalé en rouge.
   </p>
   <table class="config-table">
     <thead>
@@ -702,23 +708,21 @@ function sign(dex) {
 }
 
 function layoutNodes(dexNodes) {
-  // Grouped by chain affinity, NOT alphabetical — so each Wallet hub's
+  // Ordered by chain affinity, NOT alphabetical — so each Wallet hub's
   // spokes stay on its own side of the ring and never have to sweep across
   // the OTHER hub to reach it (BSC hub sits at cx<0, ARBITRUM hub at cx>0,
   // see walletHubs). An alphabetical ordering scattered ARBITRUM-only DEXes
   // onto the BSC side and vice versa, which is exactly what made an edge
   // like "Ondo Perps -> Wallet ARBITRUM" visually cut across Wallet BSC on
-  // its way there even though it never touched it.
+  // its way there even though it never touched it. A DEX supporting only one
+  // chain is grouped with that chain; one supporting both (MEXC, Aden, ...)
+  // sits at the top/bottom transition between the two groups.
   //
-  // The two chain arcs are spaced INDEPENDENTLY of each other (each group's
-  // own count divides its own 180° half), not as one evenly-spaced full
-  // circle split at the midpoint: today's registry has 5 ARBITRUM-only DEXes
-  // against 1 BSC-only, and forcing an even 50/50 index split would still
-  // overflow ARBITRUM-only DEXes into the BSC half (verified live — that's
-  // exactly what happened on the first attempt at this fix). A DEX
-  // supporting only one chain goes on that chain's arc; one supporting both
-  // (MEXC, Aden) sits right at the top/bottom transition between the two
-  // arcs, fanned out symmetrically if there's more than one.
+  // Every node then gets the SAME angular slot (360°/n) walking the ring in
+  // that group order, starting centered on the top (-90°) seam — one single
+  // uniform step for the whole ring, not each group spaced independently of
+  // the others (which used to squeeze dual-chain venues into a much
+  // narrower fan than single-chain ones got, an uneven-looking ring).
   const byName = (a, b) => a.name.localeCompare(b.name);
   const arbOnly = dexNodes.filter(d => d.chains.includes("ARBITRUM") && !d.chains.includes("BSC")).sort(byName);
   const bscOnly = dexNodes.filter(d => d.chains.includes("BSC") && !d.chains.includes("ARBITRUM")).sort(byName);
@@ -726,42 +730,46 @@ function layoutNodes(dexNodes) {
   // Neither chain (shouldn't happen with today's registry, kept so a future
   // 3rd chain never silently drops a node instead of just landing oddly).
   const other = dexNodes.filter(d => !d.chains.includes("ARBITRUM") && !d.chains.includes("BSC")).sort(byName);
+  const bothTop = both.slice(0, Math.ceil(both.length / 2));
+  const bothBottom = both.slice(Math.ceil(both.length / 2));
+  const ordered = [...bothTop, ...arbOnly, ...bothBottom, ...bscOnly, ...other];
 
-  const n = dexNodes.length;
-  // Radius sized off the DENSER of the two half-circle arcs (not the old
-  // full-circle assumption), so per-node spacing on the bigger arc still
-  // meets MIN_ARC_SPACING even when one chain has most of the DEXes.
-  const maxArcCount = Math.max(arbOnly.length, bscOnly.length, 1);
-  const radius = Math.max(220, (maxArcCount * MIN_ARC_SPACING) / Math.PI);
-  const maxActivity = Math.max(1, ...dexNodes.map(activity));
-
-  const place = (dex, angleDeg) => {
+  const n = ordered.length;
+  if (n === 0) return 220;
+  // Radius sized so a FULL circle of n evenly-spaced nodes still meets
+  // MIN_ARC_SPACING (arc length = 2πr/n).
+  const radius = Math.max(220, (n * MIN_ARC_SPACING) / (2 * Math.PI));
+  const maxActivity = Math.max(1, ...ordered.map(activity));
+  const step = 360 / n;
+  // Centers bothTop's group on -90° (its average index is (bothTop.length-1)/2)
+  // and every subsequent item follows at a constant `step`, so the whole
+  // ring — including the arbOnly/bothBottom/bscOnly/other groups that come
+  // after it in `ordered` — ends up spaced by exactly the same angle.
+  ordered.forEach((dex, i) => {
+    const angleDeg = -90 + (i - (bothTop.length - 1) / 2) * step;
     const angle = (angleDeg * Math.PI) / 180;
     dex.angle = angle;
     dex.cx = Math.cos(angle) * radius;
     dex.cy = Math.sin(angle) * radius;
     dex.r = MIN_R + Math.sqrt(activity(dex) / maxActivity) * (MAX_R - MIN_R);
-  };
-  // Evenly spaced strictly inside its own half (never touching the exact
-  // ±90° boundary, which is reserved for `both`-chain DEXes below).
-  arbOnly.forEach((dex, j) => place(dex, -90 + ((j + 0.5) / arbOnly.length) * 180));
-  bscOnly.forEach((dex, j) => place(dex, 90 + ((j + 0.5) / bscOnly.length) * 180));
-  // Straddles the exact top (-90°) / bottom (90°) transition point,
-  // symmetric around it — neutral placement for a DEX that can legitimately
-  // route through either hub depending on the journey.
-  const bothTop = both.slice(0, Math.ceil(both.length / 2));
-  const bothBottom = both.slice(Math.ceil(both.length / 2));
-  const fanOutAround = (list, centerDeg) => {
-    const step = 10;
-    list.forEach((dex, j) => place(dex, centerDeg + (j - (list.length - 1) / 2) * step));
-  };
-  fanOutAround(bothTop, -90);
-  fanOutAround(bothBottom, 90);
-  other.forEach((dex, j) => place(dex, other.length ? ((j + 0.5) / other.length) * 360 - 90 : 0));
+  });
 
   return radius;
 }
-const ringRadius = layoutNodes(GRAPH_DATA.dexNodes);
+// LE node "swap" (voir GRAPH_DATA.swapNode / web_view.py::_swapNodeDict) :
+// un seul node pour toutes les chains (contrairement à un DEX, un par node),
+// mais placé SUR LE MÊME ANNEAU que les DEX, au même titre qu'eux — voir
+// l'appel à layoutNodes juste en dessous, où il est passé dans le même
+// tableau. `inbalance`/`withdrawBalances` à zéro (aucun concept de surplus/
+// déficit pour un swap venue) uniquement pour satisfaire activity()/sign(),
+// que layoutNodes appelle génériquement sur chaque entrée — `chains`
+// contenant à la fois ARBITRUM et BSC, il rejoint naturellement le groupe
+// "both" (voir layoutNodes) et se fait placer/fanned à côté d'Aden/MEXC au
+// lieu d'un point fixe arbitraire. null si le graphe n'a aucune edge Swap.
+const swapNode = GRAPH_DATA.swapNode
+  ? { ...GRAPH_DATA.swapNode, inbalance: 0, withdrawBalances: {} }
+  : null;
+const ringRadius = layoutNodes(swapNode ? [...GRAPH_DATA.dexNodes, swapNode] : GRAPH_DATA.dexNodes);
 document.getElementById("centerMark").setAttribute("font-size", Math.max(18, ringRadius * 0.09));
 
 // Deux nœuds "Wallet" FIXES (pas des données du solveur — structurels,
@@ -1018,6 +1026,18 @@ async function readNdjsonStream(response, onEvent) {
   if (buf.trim()) onEvent(JSON.parse(buf));
 }
 
+// Shared outcome -> (css class, icon) mapping for the stage tracker, the
+// popup title and the mini pill, so all three always agree: "ok" is the
+// only outcome that ever reads as done/green — see runLiveHop, which
+// derives this straight from ExecutedHop.status, never from whether the
+// HTTP request itself merely succeeded.
+function execOutcomeClass(outcome) {
+  return outcome === "ok" ? "done" : outcome === "unconfirmed" ? "pending" : "error";
+}
+function execOutcomeIcon(outcome) {
+  return outcome === "ok" ? "✓" : outcome === "unconfirmed" ? "⏳" : "✕";
+}
+
 // Renders the "stage" events above into #exec-stages as they stream in:
 // the previously-active stage freezes as done/error (spinner -> ✓/✕) and a
 // new spinner starts for the incoming one. `domain` ("onchain" vs
@@ -1044,11 +1064,17 @@ function createStageTracker(container, venueName) {
       current.innerHTML = `<span class="exec-stage-icon"><span class="exec-spinner"></span></span>${tagHtml}<span class="exec-stage-msg">${message}</span>`;
       list.appendChild(current);
     },
-    finish(ok) {
+    // outcome: "ok" | "unconfirmed" | "error" — matches ExecutedHop.status
+    // exactly (see runLiveHop), so this never claims "done" (green ✓) for
+    // anything short of an actually-observed balance change on the venue.
+    // "unconfirmed" (the on-chain leg confirmed but the venue's own
+    // balance never moved within the wait window) gets its own amber
+    // state, not lumped into either done or error.
+    finish(outcome) {
       if (!current) return;
       current.classList.remove("active");
-      current.classList.add(ok ? "done" : "error");
-      current.querySelector(".exec-stage-icon").innerHTML = ok ? "✓" : "✕";
+      current.classList.add(execOutcomeClass(outcome));
+      current.querySelector(".exec-stage-icon").innerHTML = execOutcomeIcon(outcome);
     },
     html() {
       return list.outerHTML;
@@ -1098,15 +1124,16 @@ function hideExecModal() {
   execMiniEl.hidden = false;
 }
 
-// Called once a run's terminal event (done/error) arrives — updates
-// whichever of the popup/pill is currently the visible one, and flips the
-// pill (if that's what's showing) from a spinner to a final ✓/✕ so closing
-// it mid-run and walking away still surfaces the outcome later.
-function finishExecIndicator(ok, hopLabel) {
+// Called once a run's terminal outcome ("ok" | "unconfirmed" | "error", see
+// ExecutedHop.status) is known — updates whichever of the popup/pill is
+// currently the visible one, and flips the pill (if that's what's showing)
+// from a spinner to a final ✓/⏳/✕ so closing it mid-run and walking away
+// still surfaces the real outcome later, not a premature "done".
+function finishExecIndicator(outcome, hopLabel) {
   execRunActive = false;
   if (execMiniEl.hidden) return; // popup is open — renderHopTestResult/title updates cover it
-  execMiniEl.className = ok ? "done" : "error";
-  execMiniTextEl.textContent = `${ok ? "✓" : "✕"} ${hopLabel} — click to view`;
+  execMiniEl.className = execOutcomeClass(outcome);
+  execMiniTextEl.textContent = `${execOutcomeIcon(outcome)} ${hopLabel} — click to view`;
 }
 
 document.getElementById("execModalClose").addEventListener("click", hideExecModal);
@@ -1184,28 +1211,39 @@ async function runLiveHop(resultEl, box, data, ctx) {
       else finalEvent = event; // the terminal "done" or "error" event
     });
   } catch (e) {
-    tracker.finish(false);
+    tracker.finish("error");
     execModalTitleEl.textContent = "Execution failed";
     execModalBodyEl.insertAdjacentHTML("beforeend", `<div class="test-note test-status-error">${e.message}</div>`);
     resultEl.innerHTML = `<div class="test-note test-status-error">${e.message}</div>`;
-    finishExecIndicator(false, hopLabel);
+    finishExecIndicator("error", hopLabel);
     return;
   }
 
   if (!finalEvent || !finalEvent.ok) {
-    tracker.finish(false);
+    tracker.finish("error");
     const msg = finalEvent ? finalEvent.error : "the connection ended before a result came back";
     execModalTitleEl.textContent = "Execution failed";
     execModalBodyEl.insertAdjacentHTML("beforeend", `<div class="test-note test-status-error">${msg}</div>`);
     resultEl.innerHTML = `<div class="test-note test-status-error">${msg}</div>`;
-    finishExecIndicator(false, hopLabel);
+    finishExecIndicator("error", hopLabel);
     return;
   }
 
-  tracker.finish(true);
-  execModalTitleEl.textContent = "Execution complete";
+  // finalEvent.ok only means the HTTP round trip succeeded — it says
+  // NOTHING about whether the hop itself did. The real outcome is
+  // executed.status, straight from executor.py: "ok" only when the DEX's
+  // OWN balance was actually observed to move (see _run_deposit/
+  // _run_withdraw's poll loop) — "unconfirmed" means the on-chain leg
+  // confirmed but that balance change was never seen within the wait
+  // window. Treating "ok: true" alone as success used to show a green
+  // "done" popup for an unconfirmed deposit, which is exactly backwards.
+  const status = finalEvent.executed.status; // "ok" | "unconfirmed" | "error"
+  tracker.finish(status);
+  execModalTitleEl.textContent =
+    status === "ok" ? "Execution complete" : status === "unconfirmed" ? "Not yet confirmed" : "Execution failed";
   renderHopTestResult(resultEl, finalEvent, ctx, tracker.html());
-  finishExecIndicator(true, hopLabel);
+  if (status === "unconfirmed") addRecheckBalanceButton(resultEl, ctx.dex);
+  finishExecIndicator(status, hopLabel);
 
   // A live hop just moved real funds — the cached wallet balance is now
   // stale, unlike every other UI action (this is the only place that
@@ -1214,6 +1252,35 @@ async function runLiveHop(resultEl, box, data, ctx) {
   await getWalletBalances(true);
   fetchWalletBalances();
   if (selectedWalletChain) renderWalletDetails(selectedWalletChain);
+}
+
+// Shown only for an "unconfirmed" outcome: the on-chain leg is done, but
+// executor.py gave up waiting for the DEX's own balance to move within
+// POLL_TIMEOUT_SECONDS — that's a wait-window limit, not proof it never
+// landed. Re-checks the SAME live balance read the DEX's own Details panel
+// uses (GET /api/dex-balances/<name>, see loadDexRealBalance) so the user
+// can keep checking back without re-running the whole hop.
+function addRecheckBalanceButton(resultEl, dexName) {
+  const wrap = document.createElement("div");
+  wrap.innerHTML = `<button class="exec-recheck-btn" type="button">Check ${dexName}'s balance now</button><div class="exec-recheck-result"></div>`;
+  resultEl.appendChild(wrap);
+  const btn = wrap.querySelector(".exec-recheck-btn");
+  const out = wrap.querySelector(".exec-recheck-result");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.textContent = "Checking…";
+    try {
+      const res = await fetch(`/api/dex-balances/${encodeURIComponent(dexName)}`);
+      const data = await res.json();
+      out.textContent = data.balances
+        ? `${dexName} balance right now — USDT: $${fmt(data.balances.USDT || 0)}, USDC: $${fmt(data.balances.USDC || 0)}`
+        : `Couldn't read ${dexName}'s balance (${data.error || "unavailable"}).`;
+    } catch (e) {
+      out.textContent = `Couldn't read ${dexName}'s balance (${e.message}).`;
+    }
+    btn.disabled = false;
+    btn.textContent = `Check ${dexName}'s balance now`;
+  });
 }
 // "Execute" — exécution LIVE d'un hop CHOISI PAR LE SOLVEUR, au montant que
 // le solveur a retenu pour cette arête (pas le montant de test minimal de
@@ -1628,6 +1695,143 @@ for (const dex of GRAPH_DATA.dexNodes) {
   g.addEventListener("mouseleave", hideTooltip);
 }
 
+// LE node "swap" (voir swapNode plus haut) — même dessin (cercle + logo/
+// monogramme + label) qu'un node DEX ci-dessus, PAS le <rect> des
+// walletHubs : visuellement un venue comme un DEX. Pas d'anneau de solde
+// (aucun concept de surplus/déficit pour un swap venue) : anneau neutre
+// `--border` au lieu de la couleur de signe.
+let swapNodeElement = null;
+if (swapNode) {
+  const g = document.createElementNS(SVG_NS, "g");
+  g.setAttribute("class", "node");
+  g.setAttribute("transform", `translate(${swapNode.cx}, ${swapNode.cy})`);
+  g.dataset.name = swapNode.name;
+
+  const brandColor = swapNode.brandColor || "var(--border)";
+  const circle = document.createElementNS(SVG_NS, "circle");
+  circle.setAttribute("r", swapNode.r);
+  circle.style.fill = brandColor;
+  circle.style.fillOpacity = swapNode.logo ? "0.18" : "0.28";
+  circle.style.stroke = "var(--border)";
+  circle.style.strokeWidth = "1.6";
+  g.appendChild(circle);
+
+  if (swapNode.logo) {
+    const clipId = "logo-clip-swap";
+    const clipPath = document.createElementNS(SVG_NS, "clipPath");
+    clipPath.setAttribute("id", clipId);
+    const clipCircle = document.createElementNS(SVG_NS, "circle");
+    clipCircle.setAttribute("r", swapNode.r - 1.5);
+    clipPath.appendChild(clipCircle);
+    g.appendChild(clipPath);
+
+    const logoSize = swapNode.r * 1.55;
+    const image = document.createElementNS(SVG_NS, "image");
+    image.setAttributeNS(XLINK_NS, "xlink:href", swapNode.logo);
+    image.setAttribute("href", swapNode.logo);
+    image.setAttribute("x", -logoSize / 2);
+    image.setAttribute("y", -logoSize / 2);
+    image.setAttribute("width", logoSize);
+    image.setAttribute("height", logoSize);
+    image.setAttribute("preserveAspectRatio", "xMidYMid slice");
+    image.setAttribute("clip-path", `url(#${clipId})`);
+    image.style.pointerEvents = "none";
+    g.appendChild(image);
+  } else {
+    const monogram = document.createElementNS(SVG_NS, "text");
+    monogram.setAttribute("class", "node-monogram");
+    monogram.setAttribute("y", 4);
+    monogram.setAttribute("text-anchor", "middle");
+    monogram.textContent = (swapNode.name.match(/[A-Za-z]/g) || ["?"]).slice(0, 2).join("").toUpperCase();
+    g.appendChild(monogram);
+  }
+
+  const label = document.createElementNS(SVG_NS, "text");
+  label.setAttribute("y", -swapNode.r - 8);
+  label.setAttribute("text-anchor", "middle");
+  label.textContent = swapNode.name;
+  g.appendChild(label);
+
+  const sub = document.createElementNS(SVG_NS, "text");
+  sub.setAttribute("class", "sublabel zero");
+  sub.setAttribute("y", swapNode.r + 16);
+  sub.setAttribute("text-anchor", "middle");
+  sub.textContent = `${swapNode.chains.length} chains`;
+  g.appendChild(sub);
+
+  nodesLayer.appendChild(g);
+  swapNodeElement = g;
+
+  g.addEventListener("click", (ev) => { ev.stopPropagation(); selectSwap(); });
+  g.addEventListener("mouseenter", (ev) => showTooltip(ev, swapNodeTooltipHtml(swapNode)));
+  g.addEventListener("mousemove", positionTooltip);
+  g.addEventListener("mouseleave", hideTooltip);
+
+  // Deux arêtes par Wallet hub, mais SEULEMENT si le solveur a réellement
+  // choisi un Swap sur cette chain (edge.flow > 0, voir
+  // computeChosenOperations côté Python) — jamais affichées juste parce que
+  // CoW Swap existe dans le registre : si aucun swap n'est utilisé dans le
+  // plan courant, aucune arête ici, seul le node reste visible (venue
+  // disponible mais inactive). Le "venue d'où ça vient" et le "venue où ça
+  // ressort" sont le MÊME Wallet hub (voir EdgeType.Swap/Graph._linkSwaps :
+  // jamais de changement de chain, contrairement à un Bridge) ; la stable
+  // entrante/sortante vient de `testable.stable`/`testable.toStable` (voir
+  // web_view.py::_testableHopInfo), pas un sens canonique arbitraire. MÊME
+  // style/animation qu'une arête DEX "chosen" (voir walletJourneyEdges plus
+  // haut, dont ce bloc reprend exactement le pattern path/dots/hitPath).
+  const swapHubs = walletHubs.filter(hub => swapNode.chains.includes(hub.chain));
+  const chosenSwapOps = GRAPH_DATA.operations.filter(op => op.type === "Swap" && op.testable);
+
+  const drawSwapStub = (a, b, stable) => {
+    const { sx, sy, mx, my, ex, ey } = edgeGeometry(a, b);
+    const pathId = `edge-path-${edgeCounter++}`;
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("id", pathId);
+    path.setAttribute("d", `M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}`);
+    path.setAttribute("class", "edge chosen");
+    setEdgeStableClass(path, stable);
+    path.setAttribute("marker-end", "url(#arrow)");
+    path.style.strokeWidth = "2.4";
+    path.style.opacity = "0.9";
+    edgesLayer.appendChild(path);
+
+    const pathLength = Math.hypot(ex - sx, ey - sy);
+    const speedFactor = Math.max(0.6, pathLength / 260);
+    const dots = createFlowDots(pathId, speedFactor, stable);
+    edgesLayer.appendChild(dots);
+
+    const hitPath = document.createElementNS(SVG_NS, "path");
+    hitPath.setAttribute("d", `M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}`);
+    hitPath.setAttribute("class", "edge-hit");
+    edgesLayer.appendChild(hitPath);
+
+    return { path, hitPath };
+  };
+
+  for (const hub of swapHubs) {
+    for (const op of chosenSwapOps.filter(o => o.testable.chain === hub.chain)) {
+      const { stable, toStable } = op.testable;
+
+      const { path: inPath, hitPath: inHit } = drawSwapStub(hub, swapNode, stable);
+      const inTip = `<div><b>Wallet ${hub.chain}</b> → <b>CoW Swap</b></div><div>${stable} in · $${fmt(op.amount)}</div>`;
+      inHit.addEventListener("mouseenter", (ev) => { inPath.classList.add("hover"); showTooltip(ev, inTip); });
+      inHit.addEventListener("mousemove", positionTooltip);
+      inHit.addEventListener("mouseleave", () => { inPath.classList.remove("hover"); hideTooltip(); });
+
+      const { path: outPath, hitPath: outHit } = drawSwapStub(swapNode, hub, toStable);
+      const outTip = `<div><b>CoW Swap</b> → <b>Wallet ${hub.chain}</b></div><div>${toStable} out · $${fmt(op.amount)}</div>`;
+      outHit.addEventListener("mouseenter", (ev) => { outPath.classList.add("hover"); showTooltip(ev, outTip); });
+      outHit.addEventListener("mousemove", positionTooltip);
+      outHit.addEventListener("mouseleave", () => { outPath.classList.remove("hover"); hideTooltip(); });
+    }
+  }
+}
+function swapNodeTooltipHtml(swap) {
+  return `<div><b>${swap.name}</b></div>
+          <div>on-chain stablecoin swap, same chain only</div>
+          <div>chains: ${swap.chains.join(", ")}</div>`;
+}
+
 // Nœuds "Wallet" (voir walletHubs plus haut) — même <g class="node ..."> que
 // les DEX (réutilise .selected/.dimmed/.hidden génériques, voir CSS) mais un
 // <rect> arrondi plutôt qu'un <circle> : jamais confondu avec un DEX au
@@ -1696,11 +1900,13 @@ function hideTooltip() { tooltip.style.display = "none"; }
 let selectedName = null;
 let selectedEdgeKey = null;
 let selectedWalletChain = null;
+let selectedSwap = false;
 
 function clearSelection() {
   selectedName = null;
   selectedEdgeKey = null;
   selectedWalletChain = null;
+  selectedSwap = false;
   document.querySelectorAll(".node.selected").forEach(e => e.classList.remove("selected"));
   document.querySelectorAll(".dimmed").forEach(e => e.classList.remove("dimmed"));
   document.querySelectorAll(".edge.highlight").forEach(e => e.classList.remove("highlight"));
@@ -1948,6 +2154,44 @@ function selectDex(name) {
   }
 
   renderDexDetails(dex);
+}
+
+// LE node "swap" (voir swapNode plus haut) — pas de SourceNode/paths Dijkstra
+// derrière (un swap n'est jamais qu'une edge WalletNode -> WalletNode, voir
+// _swapNodeDict côté Python) : le détail affiché se limite à ce qu'on peut
+// dire sans solveur — les chains supportées — plus les hops Swap du plan
+// RÉELLEMENT choisi (GRAPH_DATA.operations, même source que le reste du
+// panel "Chosen Operations").
+function selectSwap() {
+  if (!swapNode) return;
+  clearSelection();
+  selectedSwap = true;
+  if (swapNodeElement) swapNodeElement.classList.add("selected");
+  renderSwapDetails(swapNode);
+}
+
+function renderSwapDetails(swap) {
+  const chainChips = swap.chains.map(c => `<span class="chip">${c}</span>`).join("");
+  const swapOps = GRAPH_DATA.operations.filter(op => op.type === "Swap");
+  const opsHtml = swapOps.length
+    ? swapOps.map(op => `
+        <div class="path-row">
+          <div class="path-head expanded" style="cursor:default">
+            <span style="flex:1">${op.from} → ${op.to}</span>
+            <span class="cost">$${fmt(op.amount)} · ${fmt(op.cost)} · ${fmtDuration(op.time)}</span>
+          </div>
+        </div>`).join("")
+    : `<div class="no-paths">No swap chosen by the solver in the current plan.</div>`;
+
+  document.getElementById("details").innerHTML = `
+    <h2>Details</h2>
+    <dl>
+      <dt>Venue</dt><dd>${swap.name}</dd>
+      <dt>Scope</dt><dd>On-chain stablecoin swap, same chain only (no bridging)</dd>
+      <dt>Supported chains</dt><dd><div class="chip-row">${chainChips}</div></dd>
+    </dl>
+    <h2>Chosen by the solver</h2>
+    ${opsHtml}`;
 }
 
 // Wallet nodes (see walletHubs) — clicking one shows that chain's REAL

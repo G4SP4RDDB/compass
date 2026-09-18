@@ -113,6 +113,18 @@ def run_hop(
             on_stage,
             planned.estimatedTimeSeconds,
         )
+    if planned.hopType == HopType.BRIDGE:
+        return _run_bridge(
+            connector,
+            chain,
+            Chain[planned.toChain],
+            stable,
+            amount_usd,
+            wallet,
+            live,
+            on_stage,
+            planned.estimatedTimeSeconds,
+        )
     return _run_deposit(connector, chain, stable, amount_usd, wallet, live, on_stage, planned.estimatedTimeSeconds)
 
 
@@ -273,6 +285,85 @@ def _run_deposit(
             else f"tx confirmed on-chain ({onchain.tx_hash}) but the DEX balance never reflected it "
             f"within {config.POLL_TIMEOUT_SECONDS:.0f}s"
         ),
+    )
+
+
+def _run_bridge(
+    connector: DexConnector,
+    fromChain: Chain,
+    toChain: Chain,
+    stable: Stable,
+    amount_usd: float,
+    wallet: OperatingWallet,
+    live: bool,
+    on_stage: Callable[[str, str, str], None] = _NOOP_STAGE,
+    estimated_time_s: float = 0.0,
+) -> ExecutedHop:
+    """Aden's internal bridge: a deposit into Aden on `fromChain` followed by
+    a withdraw from Aden on `toChain` — literally what the graph model
+    already treats as a single combined-cost/time edge (costing.py's
+    EdgeType.Bridge branch). Reuses _run_deposit/_run_withdraw verbatim
+    (same mechanics, already exercised standalone) rather than
+    reimplementing either leg, and merges their two ExecutedHops into the
+    ONE the caller sees."""
+    startedAt = time.time()
+    deposit_result = _run_deposit(connector, fromChain, stable, amount_usd, wallet, live, on_stage, estimated_time_s)
+    if deposit_result.status not in ("ok", "dry_run"):
+        # The deposit leg itself failed or never got credited — funds may
+        # already be sitting at Aden on fromChain, uncredited toward a
+        # toChain withdraw. Surface that distinctly rather than attempting
+        # to withdraw an amount that was never actually deposited.
+        return ExecutedHop(
+            live=live,
+            startedAt=startedAt,
+            finishedAt=deposit_result.finishedAt,
+            amountRequestedUsd=amount_usd,
+            actualCostUsd=deposit_result.actualCostUsd,
+            txHash=deposit_result.txHash,
+            status=deposit_result.status,
+            notes=f"bridge deposit leg ({fromChain.name}) did not complete, withdraw leg not attempted: {deposit_result.notes}",
+        )
+
+    if not live:
+        # Withdraw fee/time can only be measured live (see _run_withdraw) —
+        # a dry run's bridge cost is just the deposit leg's simulated gas,
+        # same convention _run_withdraw itself uses for a standalone dry run.
+        return ExecutedHop(
+            live=False,
+            startedAt=startedAt,
+            finishedAt=deposit_result.finishedAt,
+            amountRequestedUsd=amount_usd,
+            actualCostUsd=deposit_result.actualCostUsd,
+            status="dry_run",
+            notes=(
+                f"bridge deposit leg ({fromChain.name}) simulated gas ${deposit_result.actualCostUsd or 0.0:.4f}; "
+                f"the withdraw leg ({toChain.name}) fee/time can only be measured live"
+            ),
+        )
+
+    deposit_received_usd = deposit_result.amountReceivedUsd if deposit_result.amountReceivedUsd is not None else amount_usd
+    withdraw_result = _run_withdraw(
+        connector, toChain, stable, deposit_received_usd, wallet, live, on_stage, estimated_time_s
+    )
+    combined_cost = (
+        (deposit_result.actualCostUsd or 0.0) + (withdraw_result.actualCostUsd or 0.0)
+        if withdraw_result.status == "ok"
+        else None
+    )
+    notes = f"deposit leg ({fromChain.name}) cost ${deposit_result.actualCostUsd or 0.0:.4f}"
+    if withdraw_result.notes:
+        notes += f"; withdraw leg ({toChain.name}): {withdraw_result.notes}"
+    return ExecutedHop(
+        live=True,
+        startedAt=startedAt,
+        finishedAt=withdraw_result.finishedAt,
+        amountRequestedUsd=amount_usd,
+        actualCostUsd=combined_cost,
+        amountReceivedUsd=withdraw_result.amountReceivedUsd,
+        txHash=deposit_result.txHash,
+        externalId=withdraw_result.externalId,
+        status=withdraw_result.status,
+        notes=notes,
     )
 
 
@@ -465,7 +556,7 @@ def run_journey_hops(
         result = run_hop(planned, connector, amount, wallet, live, spent_so_far=spent)
         executed.append(result)
         spent += amount
-        if planned.hopType in (HopType.WITHDRAW, HopType.SWAP) and live and result.amountReceivedUsd is not None:
+        if planned.hopType in (HopType.WITHDRAW, HopType.SWAP, HopType.BRIDGE) and live and result.amountReceivedUsd is not None:
             carried_amount_usd = result.amountReceivedUsd
 
     return executed

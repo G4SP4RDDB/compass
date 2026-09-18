@@ -67,6 +67,17 @@ def collect_delay_samples(reports: list[TestRunReport]) -> list[DelaySample]:
                 executed = hc.executed
                 if not executed.live or executed.status != "ok":
                     continue
+                if hc.planned.hopType == HopType.BRIDGE:
+                    # No measured feedback loop for Bridge yet — costing.
+                    # computeBridgeDelay always uses its conservative
+                    # placeholder (ADEN_INTERNAL_BRIDGE_DELAY_SECONDS), never
+                    # a measured value, and there's no BRIDGE entry in
+                    # _FIELD_BY_HOP_TYPE below to group one into. Collecting
+                    # (and silently discarding) the sample instead of
+                    # KeyError-ing here keeps a live bridge run's report
+                    # savable; wire this up properly if/when
+                    # computeBridgeDelay grows a measured branch.
+                    continue
                 samples.append(
                     DelaySample(
                         dex=hc.planned.dex,

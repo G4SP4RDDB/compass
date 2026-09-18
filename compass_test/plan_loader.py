@@ -5,10 +5,15 @@ chosen journeys (visualization/journeys.decomposeJourneys — the exact
 decomposition operations.txt and the 'Chosen Operations' tab already use)
 down to the Withdraw/Deposit hops compass_test can actually execute.
 
-A journey that touches a Bridge hop is marked out of scope WHOLESALE (never
-partially executed) — Bridge isn't instrumented (see README.md), and
-silently dropping the bridge leg of a journey while still running its
-withdraw+deposit would test something the solver never actually chose.
+A Bridge hop (cross-chain same-stable move, graph.structures.bridges.
+BridgeProtocol.ADEN_INTERNAL — the only protocol modeled) IS instrumented,
+through Aden's own deposit/withdraw ledger (runners/aden.py), for USDT on
+BSC<->Arbitrum only — Aden's supported_chains/supported_stables. A journey
+whose Bridge leg falls outside that (a different stable, since
+availableBridgeProtocols models the route as open to any stable even though
+only Aden's own USDT is actually instrumented) is marked out of scope with a
+reason, same pattern as an unsupported Swap pair below — never silently
+dropping just that leg while still running the rest.
 Swap hops (same-chain USDC <-> USDT) ARE instrumented, through CoW Swap
 (runners/cowswap.py), on BSC and Arbitrum only.
 """
@@ -26,12 +31,14 @@ from graph import costing
 from graph.edge import Edge, EdgeType
 from graph.graph import Graph
 from graph.node import NodeType, SourceNode, WalletNode, WithdrawNode
+from graph.structures.bridges import BridgeProtocol
 from graph.structures.DEXes import DEX, Chain, Stable
 from graph.structures.dex_registry import buildDexRegistry
 from main import buildAndSolveGraph
 from visualization.journeys import decomposeJourneys
 
 from .models import HopType, PlannedHop
+from .runners.aden import AdenConnector
 from .runners.cowswap import CowSwapRunner
 from .runners.registry import is_supported
 
@@ -51,6 +58,11 @@ def build_solved_graph() -> Graph:
     return graph
 
 
+# The only bridge protocol modeled (graph.structures.bridges.BridgeProtocol)
+# -> the DEX whose ledger actually implements it.
+_BRIDGE_DEX_NAME = {BridgeProtocol.ADEN_INTERNAL: "Aden"}
+
+
 def _hop_type(edge: Edge) -> HopType | None:
     if edge.u.type == NodeType.Withdraw:
         return HopType.WITHDRAW
@@ -58,6 +70,8 @@ def _hop_type(edge: Edge) -> HopType | None:
         return HopType.DEPOSIT
     if edge.type == EdgeType.Swap:
         return HopType.SWAP
+    if edge.type == EdgeType.Bridge:
+        return HopType.BRIDGE
     return None
 
 
@@ -77,6 +91,25 @@ def _planned_hop_from_edge(edge: Edge) -> PlannedHop:
             stable=walletIn.stable.name,
             toStable=walletOut.stable.name,
             estimatedCostUsd=(edge.cost or 0.0) + (edge.realizedSlippageUsd or 0.0),
+            estimatedTimeSeconds=edge.time or 0.0,
+            configuredTimeSeconds=costing.computeConfiguredDelay(edge),
+            timeSource=costing.delaySource(edge),
+            solvedFlowUsd=edge.flow or 0.0,
+        )
+    if hopType == HopType.BRIDGE:
+        walletIn, walletOut = edge.u, edge.v
+        # edge.cost/edge.time are already the WHOLE bridge's combined
+        # gas+fee / delay (costing.computeCost's EdgeType.Bridge branch,
+        # computeBridgeDelay) — a single number, not split per leg, mirroring
+        # how the Swap branch above reads edge.cost/edge.time directly rather
+        # than re-deriving them.
+        return PlannedHop(
+            hopType=hopType,
+            dex=_BRIDGE_DEX_NAME[edge.bridgeProtocol],
+            chain=walletIn.chain.name,
+            toChain=walletOut.chain.name,
+            stable=walletIn.stable.name,
+            estimatedCostUsd=edge.cost or 0.0,
             estimatedTimeSeconds=edge.time or 0.0,
             configuredTimeSeconds=costing.computeConfiguredDelay(edge),
             timeSource=costing.delaySource(edge),
@@ -106,24 +139,14 @@ def _planned_hop_from_edge(edge: Edge) -> PlannedHop:
 def list_planned_journeys(graph: Graph) -> list[PlannedJourney]:
     planned: list[PlannedJourney] = []
     for journey in decomposeJourneys(graph):
-        if any(e.type == EdgeType.Bridge for e in journey.hops):
-            planned.append(
-                PlannedJourney(
-                    fromDex=journey.fromDex,
-                    toDex=journey.toDex,
-                    stable=journey.stable,
-                    inScope=False,
-                    outOfScopeReason="journey includes a Bridge hop — only Withdraw/Swap/Deposit are instrumented",
-                )
-            )
-            continue
-
         hops = [_planned_hop_from_edge(e) for e in journey.hops if _hop_type(e) is not None]
         if not hops:
             continue  # every edge on this journey is an internal zero-cost/zero-time hop, nothing to test
 
         reasons: list[str] = []
-        unsupportedDexes = sorted({h.dex for h in hops if h.hopType != HopType.SWAP and not is_supported(h.dex)})
+        unsupportedDexes = sorted(
+            {h.dex for h in hops if h.hopType not in (HopType.SWAP, HopType.BRIDGE) and not is_supported(h.dex)}
+        )
         if unsupportedDexes:
             reasons.append(f"no connector yet for: {', '.join(unsupportedDexes)}")
         unsupportedSwaps = sorted(
@@ -136,6 +159,25 @@ def list_planned_journeys(graph: Graph) -> list[PlannedJourney]:
         )
         if unsupportedSwaps:
             reasons.append(f"swap not instrumented ({COWSWAP_VENUE_NAME} is wired for BSC/Arbitrum only): {', '.join(unsupportedSwaps)}")
+        # availableBridgeProtocols models ADEN_INTERNAL as open to any stable
+        # (see graph.structures.bridges), but only Aden's own USDT ledger is
+        # actually instrumented — a Bridge hop outside Aden's real
+        # supported_chains/supported_stables is out of scope, same as an
+        # unsupported swap pair above, not a reason to drop the whole journey.
+        unsupportedBridges = sorted(
+            {
+                f"{h.stable} {h.chain}->{h.toChain}"
+                for h in hops
+                if h.hopType == HopType.BRIDGE
+                and not (
+                    Stable[h.stable] in AdenConnector.supported_stables
+                    and Chain[h.chain] in AdenConnector.supported_chains
+                    and Chain[h.toChain] in AdenConnector.supported_chains
+                )
+            }
+        )
+        if unsupportedBridges:
+            reasons.append(f"bridge not instrumented (Aden USDT, BSC<->Arbitrum only): {', '.join(unsupportedBridges)}")
         planned.append(
             PlannedJourney(
                 fromDex=journey.fromDex,
@@ -203,6 +245,36 @@ def build_hop_estimate(
         configuredTimeSeconds=costing.computeConfiguredDelay(edge),
         timeSource=costing.delaySource(edge),
         minDepositUsd=dex.minDepositUsdByChain[chain],
+    )
+
+
+def build_bridge_hop_estimate(
+    fromChain: Chain, toChain: Chain, stable: Stable, gasFeeService: GasFeeService | None = None
+) -> PlannedHop:
+    """Bridge counterpart of build_hop_estimate/build_swap_hop_estimate: the
+    solver's own estimate for a WalletNode(fromChain, stable) ->
+    WalletNode(toChain, stable) EdgeType.Bridge edge (Graph._linkBridges
+    shape) — Fee(e) = Aden's bridge gas + its flat per-direction fee
+    (costing.computeCost), Time(e) the conservative placeholder
+    (costing.computeBridgeDelay, no measured feedback loop for Bridge yet).
+    ADEN_INTERNAL is the only protocol modeled (graph.structures.bridges)."""
+    gasFeeService = gasFeeService or GasFeeService()
+    edge = Edge(
+        WalletNode(fromChain, stable, nodeIndex=0),
+        WalletNode(toChain, stable, nodeIndex=1),
+        type=EdgeType.Bridge,
+        bridgeProtocol=BridgeProtocol.ADEN_INTERNAL,
+    )
+    return PlannedHop(
+        hopType=HopType.BRIDGE,
+        dex=_BRIDGE_DEX_NAME[BridgeProtocol.ADEN_INTERNAL],
+        chain=fromChain.name,
+        toChain=toChain.name,
+        stable=stable.name,
+        estimatedCostUsd=costing.computeCost(edge, gasFeeService),
+        estimatedTimeSeconds=costing.computeDelay(edge),
+        configuredTimeSeconds=costing.computeConfiguredDelay(edge),
+        timeSource=costing.delaySource(edge),
     )
 
 

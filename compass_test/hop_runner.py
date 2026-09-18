@@ -75,14 +75,49 @@ def resolve_swap_hop(chain_name: str, stable_name: str, to_stable_name: str | No
     return chain, stable_in, stable_out, plan_loader.build_swap_hop_estimate(chain, stable_in, stable_out, amount_usd)
 
 
+def resolve_bridge_hop(from_chain_name: str, stable_name: str, to_chain_name: str):
+    """Bridge counterpart of resolve_hop: Aden's internal bridge has no
+    free-form `dex` (it's always "Aden", the only bridge protocol modeled —
+    see graph.structures.bridges.BridgeProtocol) and needs two chains
+    instead of one — same shape reason as resolve_swap_hop needing two
+    stables. Returns (fromChain, toChain, stable, PlannedHop)."""
+    registry = plan_loader.load_configured_dex_registry()
+    dex = registry["Aden"]
+    if not is_supported("Aden"):
+        raise HopValidationError("Aden: not yet instrumented (see compass_test/README.md connector status table)")
+
+    fromChain, stable = _parse_chain_stable(from_chain_name, stable_name)
+    toChain, _ = _parse_chain_stable(to_chain_name, stable_name)
+    if fromChain == toChain:
+        raise HopValidationError(f"a Bridge needs two different chains, got {fromChain.name} -> {toChain.name}")
+    if fromChain not in dex.chains or toChain not in dex.chains or stable not in dex.stables:
+        raise HopValidationError(
+            f"Aden's bridge does not support {stable.name} {fromChain.name}->{toChain.name} "
+            f"(chains={[c.name for c in dex.chains]}, stables={[s.name for s in dex.stables]})"
+        )
+
+    planned = plan_loader.build_bridge_hop_estimate(fromChain, toChain, stable)
+    # Reuse of minDepositUsd/minWithdrawUsd (Withdraw/Deposit's own fields) to
+    # carry BOTH legs' floors on a Bridge hop: the amount must clear Aden's
+    # minimum deposit on fromChain AND its minimum withdraw on toChain, same
+    # convention cli.py already uses for a whole journey's default amount
+    # (see PlannedHop.minDepositUsd's own docstring).
+    planned.minDepositUsd = dex.minDepositUsdByChain[fromChain]
+    planned.minWithdrawUsd = dex.minWithdrawUsdByChain[toChain]
+    return fromChain, toChain, stable, planned
+
+
 def resolve_hop(dex_name: str, hop_type: HopType, chain_name: str, stable_name: str):
     """Validation + estimate only — no execution. Used by both
     run_single_hop below and by callers (e.g. the frontend, before it even
     shows a "Test This Edge" button) that want to know whether a hop is
     testable without running anything. Withdraw/Deposit only — a Swap goes
-    through resolve_swap_hop (no DEX, amount-dependent estimate)."""
-    if hop_type == HopType.SWAP:
-        raise HopValidationError("resolve_hop handles Withdraw/Deposit only — use resolve_swap_hop for a Swap")
+    through resolve_swap_hop (no DEX, amount-dependent estimate), a Bridge
+    through resolve_bridge_hop (no DEX, two chains instead of one)."""
+    if hop_type in (HopType.SWAP, HopType.BRIDGE):
+        raise HopValidationError(
+            f"resolve_hop handles Withdraw/Deposit only — use resolve_{hop_type.value.lower()}_hop for a {hop_type.value}"
+        )
     registry = plan_loader.load_configured_dex_registry()
     dex = registry.get(dex_name)
     if dex is None:
@@ -111,6 +146,7 @@ def run_single_hop(
     wallet: OperatingWallet | None = None,
     confirm: Callable[[object, float, str], bool] | None = None,
     to_stable_name: str | None = None,
+    to_chain_name: str | None = None,
     on_stage: Callable[[str, str, str], None] | None = None,
 ) -> HopRunResult:
     """`confirm(planned, amount, wallet_address) -> bool`, called only when
@@ -122,9 +158,11 @@ def run_single_hop(
     way.
 
     `to_stable_name` is the bought stable of a Swap hop (`stable_name` is
-    the one sold); ignored for Withdraw/Deposit. A Swap's `dex_name` is the
-    venue, COWSWAP_VENUE_NAME — anything else is rejected rather than
-    silently routed.
+    the one sold); ignored otherwise. `to_chain_name` is the withdraw chain
+    of a Bridge hop (`chain_name` is the deposit chain); ignored otherwise.
+    A Swap's `dex_name` is the venue, COWSWAP_VENUE_NAME; a Bridge's is
+    always "Aden" (the only protocol modeled) — anything else for either is
+    rejected rather than silently routed.
 
     `on_stage`, passed straight through to executor.run_hop, is how a LIVE
     run's progress (on-chain leg confirmed vs now waiting on the exchange's
@@ -140,6 +178,22 @@ def run_single_hop(
             amount = config.DEFAULT_SWAP_TEST_USD
             usedConfiguredMinimum = True
         chain, stable, _stable_out, planned = resolve_swap_hop(chain_name, stable_name, to_stable_name, amount)
+    elif hop_type == HopType.BRIDGE:
+        if dex_name not in ("Aden", ""):
+            raise HopValidationError(f"a Bridge hop runs through Aden, not {dex_name!r}")
+        dex_name = "Aden"
+        if not to_chain_name:
+            raise HopValidationError("a Bridge hop needs the withdraw chain (toChain), e.g. chain=ARBITRUM toChain=BSC")
+        chain, _to_chain, stable, planned = resolve_bridge_hop(chain_name, stable_name, to_chain_name)
+        if amount is None:
+            floor = max(planned.minDepositUsd, planned.minWithdrawUsd)
+            if floor <= 0:
+                raise HopValidationError(
+                    "No amount given and Aden's configured minimum deposit/withdraw is 0/unset. Set it in the "
+                    'Config tab ("Min deposit"/"Min withdraw") or pass an amount explicitly.'
+                )
+            amount = floor
+            usedConfiguredMinimum = True
     else:
         dex, chain, stable, planned = resolve_hop(dex_name, hop_type, chain_name, stable_name)
         if amount is None:
