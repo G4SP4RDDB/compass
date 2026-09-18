@@ -205,6 +205,9 @@ def _run_withdraw(
         amountReceivedUsd=received_usd[0],
         externalId=result.externalId,
         status="ok",
+        gasCostUsd=0.0,
+        feeCostUsd=actual_fee_usd,
+        slippageCostUsd=0.0,
     )
 
 
@@ -251,6 +254,9 @@ def _run_deposit(
             actualCostUsd=cost_usd,
             status="dry_run",
             notes="gas simulated live (eth_estimateGas against current chain state) — nothing signed or sent",
+            gasCostUsd=cost_usd,
+            feeCostUsd=0.0,
+            slippageCostUsd=0.0,
         )
 
     before_balance = connector.poll_balance_usd(stable)
@@ -279,6 +285,9 @@ def _run_deposit(
         txHash=onchain.tx_hash,
         txConfirmedAt=txConfirmedAt,
         status="ok" if confirmed else "unconfirmed",
+        gasCostUsd=onchain.gas_cost_usd,
+        feeCostUsd=0.0,
+        slippageCostUsd=0.0,
         notes=(
             ""
             if confirmed
@@ -321,6 +330,9 @@ def _run_bridge(
             actualCostUsd=deposit_result.actualCostUsd,
             txHash=deposit_result.txHash,
             status=deposit_result.status,
+            gasCostUsd=deposit_result.gasCostUsd,
+            feeCostUsd=0.0 if deposit_result.gasCostUsd is not None else None,
+            slippageCostUsd=0.0 if deposit_result.gasCostUsd is not None else None,
             notes=f"bridge deposit leg ({fromChain.name}) did not complete, withdraw leg not attempted: {deposit_result.notes}",
         )
 
@@ -335,6 +347,9 @@ def _run_bridge(
             amountRequestedUsd=amount_usd,
             actualCostUsd=deposit_result.actualCostUsd,
             status="dry_run",
+            gasCostUsd=deposit_result.gasCostUsd,
+            feeCostUsd=0.0,
+            slippageCostUsd=0.0,
             notes=(
                 f"bridge deposit leg ({fromChain.name}) simulated gas ${deposit_result.actualCostUsd or 0.0:.4f}; "
                 f"the withdraw leg ({toChain.name}) fee/time can only be measured live"
@@ -345,11 +360,8 @@ def _run_bridge(
     withdraw_result = _run_withdraw(
         connector, toChain, stable, deposit_received_usd, wallet, live, on_stage, estimated_time_s
     )
-    combined_cost = (
-        (deposit_result.actualCostUsd or 0.0) + (withdraw_result.actualCostUsd or 0.0)
-        if withdraw_result.status == "ok"
-        else None
-    )
+    bridge_ok = withdraw_result.status == "ok"
+    combined_cost = (deposit_result.actualCostUsd or 0.0) + (withdraw_result.actualCostUsd or 0.0) if bridge_ok else None
     notes = f"deposit leg ({fromChain.name}) cost ${deposit_result.actualCostUsd or 0.0:.4f}"
     if withdraw_result.notes:
         notes += f"; withdraw leg ({toChain.name}): {withdraw_result.notes}"
@@ -363,6 +375,9 @@ def _run_bridge(
         txHash=deposit_result.txHash,
         externalId=withdraw_result.externalId,
         status=withdraw_result.status,
+        gasCostUsd=deposit_result.gasCostUsd if bridge_ok else None,
+        feeCostUsd=withdraw_result.feeCostUsd if bridge_ok else None,
+        slippageCostUsd=0.0 if bridge_ok else None,
         notes=notes,
     )
 
@@ -435,15 +450,19 @@ def _run_swap(
             if approve_tx
             else "; existing allowance covers it, no approve tx needed"
         )
+        slippage_usd = max(sold_usd - quoted_buy_usd, 0.0)
         return ExecutedHop(
             live=False,
             startedAt=startedAt,
             finishedAt=time.time(),
             amountRequestedUsd=amount_usd,
-            actualCostUsd=max(sold_usd - quoted_buy_usd, 0.0) + approve_gas_usd,
+            actualCostUsd=slippage_usd + approve_gas_usd,
             amountReceivedUsd=quoted_buy_usd,
             externalId=f"quote:{quote.quote_id}" if quote.quote_id is not None else None,
             status="dry_run",
+            gasCostUsd=approve_gas_usd,
+            feeCostUsd=0.0,
+            slippageCostUsd=slippage_usd,
             notes=(
                 f"live {runner.name} quote (id {quote.quote_id}, verified={quote.verified}): sell ${sold_usd:.4f} {stable_in.name} "
                 f"-> buy ${quoted_buy_usd:.4f} {stable_out.name}, network fee ${fee_usd:.4f}{approve_note} — nothing signed or sent"
@@ -517,16 +536,20 @@ def _run_swap(
         if abs(onchain_delta_usd - bought_usd) < 1e-4
         else f"; on-chain {stable_out.name} balance moved ${onchain_delta_usd:.4f} vs executedBuyAmount ${bought_usd:.4f}"
     )
+    slippage_usd = max(sold_actual_usd - bought_usd, 0.0)
     return ExecutedHop(
         live=True,
         startedAt=startedAt,
         finishedAt=outcome.finished_at,
         amountRequestedUsd=amount_usd,
-        actualCostUsd=max(sold_actual_usd - bought_usd, 0.0) + approve_gas_usd,
+        actualCostUsd=slippage_usd + approve_gas_usd,
         amountReceivedUsd=bought_usd,
         txHash=outcome.tx_hash or approve_hash,
         externalId=placed.uid,
         status="ok",
+        gasCostUsd=approve_gas_usd,
+        feeCostUsd=0.0,
+        slippageCostUsd=slippage_usd,
         notes=(
             f"{runner.name} order filled: sold ${sold_actual_usd:.4f} {stable_in.name} -> bought ${bought_usd:.4f} {stable_out.name} "
             f"(quoted ${quoted_buy_usd:.4f}, settlement tx {outcome.tx_hash}){approve_note}{mismatch_note}"

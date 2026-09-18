@@ -13,10 +13,10 @@ from .. import metrics_db, reporter
 def main() -> None:
     metrics_db.ensure_schema()
     reports = reporter.list_reports()
-    total_hops = 0
+    total_operations = 0
     for report in reports:
-        total_hops += metrics_db.upsert_report(report)
-    print(f"backfilled {len(reports)} reports, {total_hops} hop rows")
+        total_operations += metrics_db.upsert_report(report)
+    print(f"backfilled {len(reports)} reports, {total_operations} operation rows")
 
 
 if __name__ == "__main__":

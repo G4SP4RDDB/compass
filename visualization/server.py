@@ -369,6 +369,10 @@ def getDexBranding():
 
 @app.get("/api/metrics/summary")
 def getMetricsSummary():
+    """Headline numbers for the dashboard's stat tiles, including the
+    gas/fee/slippage cost breakdown totals and a success rate computed only
+    over LIVE operations (see metrics_db.summary's docstring — a dry run's
+    status isn't a pass/fail signal)."""
     days, live_only = _metricsQueryArgs()
     try:
         return jsonify(metrics_db.summary(days=days, live_only=live_only))
@@ -390,6 +394,19 @@ def getMetricsCostOverTime():
     days, live_only = _metricsQueryArgs()
     try:
         return jsonify(metrics_db.cost_over_time(days=days, live_only=live_only))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"metrics DB unavailable: {exc}"}), 503
+
+
+@app.get("/api/metrics/cost-breakdown")
+def getMetricsCostBreakdown():
+    """Daily gas / withdrawal-deposit fee / slippage totals — see
+    metrics_db._cost_breakdown for how actual_cost_usd is split per
+    operation type, and where legacy (pre-breakdown) reports are
+    approximated rather than split exactly."""
+    days, live_only = _metricsQueryArgs()
+    try:
+        return jsonify(metrics_db.cost_breakdown_over_time(days=days, live_only=live_only))
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": f"metrics DB unavailable: {exc}"}), 503
 

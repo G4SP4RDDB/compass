@@ -124,6 +124,21 @@ class ExecutedHop:
     externalId: str | None = None  # exchange-side withdraw id / CoW order UID, when applicable
     status: str = "ok"  # "ok" | "unconfirmed" | "error" | "dry_run"
     notes: str = ""
+    # actualCostUsd's breakdown, populated alongside it wherever it's known
+    # exactly (see executor.py — each hop type's cost is a fixed mix, not a
+    # measurement): gasCostUsd is on-chain gas we paid directly (a Deposit's
+    # full cost, or a Swap's approve-tx gas); feeCostUsd is a fee deducted by
+    # a DEX/exchange off-chain (a Withdraw's full cost, or a Bridge's
+    # withdraw leg); slippageCostUsd is price impact + venue network fee,
+    # all-in (a Swap's sold-minus-bought delta — CoW doesn't itself split
+    # its network fee from price impact, so this bucket is both combined).
+    # None (not 0.0) on a hop whose breakdown isn't known — an error/
+    # unconfirmed hop (actualCostUsd is also None then) or a report written
+    # before these fields existed (see metrics_db.py's per-hop-type
+    # reconstruction for that legacy-data case).
+    gasCostUsd: float | None = None
+    feeCostUsd: float | None = None
+    slippageCostUsd: float | None = None
 
     @property
     def actualTimeSeconds(self) -> float:
@@ -148,6 +163,9 @@ class ExecutedHop:
             externalId=d.get("externalId"),
             status=d.get("status", "ok"),
             notes=d.get("notes", ""),
+            gasCostUsd=d.get("gasCostUsd"),
+            feeCostUsd=d.get("feeCostUsd"),
+            slippageCostUsd=d.get("slippageCostUsd"),
         )
 
 

@@ -7,7 +7,12 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <style>
   /* Same token set as graph_template.html's :root — kept as a literal copy
-     (not a shared file) so this page stays a standalone static file. */
+     (not a shared file) so this page stays a standalone static file. The
+     three --type-* tokens double as the cost-breakdown chart's series
+     colors: gas is paid on a Deposit-type leg, fee on a Withdraw-type leg,
+     slippage on a Swap-type leg (see executor.py), so reusing the graph
+     view's own per-hop-type colors keeps the two pages semantically
+     consistent, not just visually. */
   :root {
     --bg: #f5f6f8;
     --panel-bg: #ffffff;
@@ -18,6 +23,9 @@
     --pos: #2fae5e;
     --neg: #e05252;
     --grid: #e6e8eb;
+    --type-withdraw: #c2410c;
+    --type-deposit: #0d9488;
+    --type-swap: #9333ea;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -30,6 +38,9 @@
       --pos: #3ecb72;
       --neg: #ff6b6b;
       --grid: #2a2e34;
+      --type-withdraw: #fb923c;
+      --type-deposit: #2dd4bf;
+      --type-swap: #c084fc;
     }
   }
   * { box-sizing: border-box; }
@@ -75,6 +86,8 @@
   }
   .tile .label { font-size: 12px; color: var(--muted); }
   .tile .value { font-size: 22px; font-weight: 600; margin-top: 4px; }
+  .tile .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .tile .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; }
 
   #charts {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
@@ -109,16 +122,19 @@
 </div>
 
 <div id="tiles">
-  <div class="tile"><div class="label">Rebalancing hops</div><div class="value" id="tileHopCount">—</div></div>
+  <div class="tile"><div class="label">Rebalancing operations</div><div class="value" id="tileOperationCount">—</div></div>
   <div class="tile"><div class="label">Runs</div><div class="value" id="tileRunCount">—</div></div>
   <div class="tile"><div class="label">Total cost</div><div class="value" id="tileTotalCost">—</div></div>
   <div class="tile"><div class="label">Avg delay</div><div class="value" id="tileAvgDelay">—</div></div>
-  <div class="tile"><div class="label">Success rate</div><div class="value" id="tileSuccessRate">—</div></div>
+  <div class="tile"><div class="label">Success rate (live only)</div><div class="value" id="tileSuccessRate">—</div><div class="sub" id="tileSuccessRateSub"></div></div>
+  <div class="tile"><div class="label"><span class="swatch" style="background:var(--type-deposit)"></span>Gas fees</div><div class="value" id="tileGasCost">—</div></div>
+  <div class="tile"><div class="label"><span class="swatch" style="background:var(--type-withdraw)"></span>Withdrawal/deposit fees</div><div class="value" id="tileFeeCost">—</div></div>
+  <div class="tile"><div class="label"><span class="swatch" style="background:var(--type-swap)"></span>Slippage</div><div class="value" id="tileSlippageCost">—</div></div>
 </div>
 
 <div id="charts">
   <div class="chart-card">
-    <h2>Rebalancings per day</h2>
+    <h2>Rebalancing operations per day</h2>
     <canvas id="dailyCountsChart"></canvas>
   </div>
   <div class="chart-card">
@@ -126,11 +142,15 @@
     <canvas id="costChart"></canvas>
   </div>
   <div class="chart-card">
+    <h2>Cost breakdown over time (USD)</h2>
+    <canvas id="costBreakdownChart"></canvas>
+  </div>
+  <div class="chart-card">
     <h2>Rebalancing delay over time (s)</h2>
     <canvas id="delayChart"></canvas>
   </div>
   <div class="chart-card">
-    <h2>Rebalancing hops by DEX</h2>
+    <h2>Rebalancing operations by DEX</h2>
     <canvas id="byDexChart"></canvas>
   </div>
 </div>
@@ -144,6 +164,9 @@ const COLORS = {
   muted: cssVar('--muted'),
   grid: cssVar('--grid'),
   panel: cssVar('--panel-bg'),
+  gas: cssVar('--type-deposit'),
+  fee: cssVar('--type-withdraw'),
+  slippage: cssVar('--type-swap'),
 };
 
 Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif";
@@ -176,7 +199,7 @@ let dexBranding = {};
 let charts = {};
 let byDexRaw = [];
 
-function makeLineChart(canvasId, label, valueKey, formatter) {
+function makeLineChart(canvasId, label, formatter) {
   const ctx = document.getElementById(canvasId).getContext('2d');
   return new Chart(ctx, {
     type: 'line',
@@ -228,12 +251,40 @@ function makeBarChart(canvasId, label, formatter) {
   });
 }
 
+function makeCostBreakdownChart(canvasId) {
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  return new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: [],
+      datasets: [
+        { label: 'Gas', data: [], backgroundColor: COLORS.gas, stack: 'cost' },
+        { label: 'Withdrawal/deposit fee', data: [], backgroundColor: COLORS.fee, stack: 'cost' },
+        { label: 'Slippage', data: [], backgroundColor: COLORS.slippage, stack: 'cost' },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: true, position: 'bottom', labels: { boxWidth: 10, color: COLORS.muted } },
+        tooltip: {
+          callbacks: { label: (item) => `${item.dataset.label}: ${fmtUsd(item.parsed.y)}` },
+        },
+      },
+      scales: {
+        x: { ...axisOpts, stacked: true },
+        y: { ...axisOpts, stacked: true, beginAtZero: true },
+      },
+    },
+  });
+}
+
 function makeDexChart(canvasId) {
   const ctx = document.getElementById(canvasId).getContext('2d');
   return new Chart(ctx, {
     type: 'bar',
     data: { labels: [], datasets: [{
-      label: 'Rebalancing hops',
+      label: 'Rebalancing operations',
       data: [],
       backgroundColor: [],
       borderRadius: 4,
@@ -248,7 +299,7 @@ function makeDexChart(canvasId) {
           callbacks: {
             label: (item) => {
               const d = byDexRaw[item.dataIndex] || {};
-              return [`Hops: ${d.hop_count}`, `Total cost: ${fmtUsd(d.total_cost_usd)}`, `Avg delay: ${fmtSeconds(d.avg_time_seconds)}`];
+              return [`Operations: ${d.operation_count}`, `Total cost: ${fmtUsd(d.total_cost_usd)}`, `Avg delay: ${fmtSeconds(d.avg_time_seconds)}`];
             },
           },
         },
@@ -283,28 +334,40 @@ function setBanner(message) {
 async function refresh() {
   const qs = queryParams();
   try {
-    const [summary, daily, cost, delay, byDex] = await Promise.all([
+    const [summary, daily, cost, costBreakdown, delay, byDex] = await Promise.all([
       fetchJson(`/api/metrics/summary?${qs}`),
       fetchJson(`/api/metrics/daily-counts?${qs}`),
       fetchJson(`/api/metrics/cost-over-time?${qs}`),
+      fetchJson(`/api/metrics/cost-breakdown?${qs}`),
       fetchJson(`/api/metrics/delay-over-time?${qs}`),
       fetchJson(`/api/metrics/by-dex?${qs}`),
     ]);
     setBanner(null);
 
-    document.getElementById('tileHopCount').textContent = summary.hop_count ?? '0';
+    document.getElementById('tileOperationCount').textContent = summary.operation_count ?? '0';
     document.getElementById('tileRunCount').textContent = summary.run_count ?? '0';
     document.getElementById('tileTotalCost').textContent = fmtUsd(summary.total_cost_usd);
     document.getElementById('tileAvgDelay').textContent = fmtSeconds(summary.avg_time_seconds);
     document.getElementById('tileSuccessRate').textContent = fmtPct(summary.success_rate);
+    document.getElementById('tileSuccessRateSub').textContent =
+      `${summary.live_operation_count ?? 0} live operation${summary.live_operation_count === 1 ? '' : 's'} in window`;
+    document.getElementById('tileGasCost').textContent = fmtUsd(summary.total_gas_cost_usd);
+    document.getElementById('tileFeeCost').textContent = fmtUsd(summary.total_fee_cost_usd);
+    document.getElementById('tileSlippageCost').textContent = fmtUsd(summary.total_slippage_cost_usd);
 
     charts.daily.data.labels = daily.map((r) => dayLabel(r.day));
-    charts.daily.data.datasets[0].data = daily.map((r) => r.hop_count);
+    charts.daily.data.datasets[0].data = daily.map((r) => r.operation_count);
     charts.daily.update();
 
     charts.cost.data.labels = cost.map((r) => dayLabel(r.day));
     charts.cost.data.datasets[0].data = cost.map((r) => r.total_cost_usd);
     charts.cost.update();
+
+    charts.costBreakdown.data.labels = costBreakdown.map((r) => dayLabel(r.day));
+    charts.costBreakdown.data.datasets[0].data = costBreakdown.map((r) => r.total_gas_cost_usd);
+    charts.costBreakdown.data.datasets[1].data = costBreakdown.map((r) => r.total_fee_cost_usd);
+    charts.costBreakdown.data.datasets[2].data = costBreakdown.map((r) => r.total_slippage_cost_usd);
+    charts.costBreakdown.update();
 
     charts.delay.data.labels = delay.map((r) => dayLabel(r.day));
     charts.delay.data.datasets[0].data = delay.map((r) => r.avg_time_seconds);
@@ -312,7 +375,7 @@ async function refresh() {
 
     byDexRaw = byDex;
     charts.byDex.data.labels = byDex.map((r) => r.dex);
-    charts.byDex.data.datasets[0].data = byDex.map((r) => r.hop_count);
+    charts.byDex.data.datasets[0].data = byDex.map((r) => r.operation_count);
     charts.byDex.data.datasets[0].backgroundColor = byDex.map((r) => dexBranding[r.dex] || COLORS.accent);
     charts.byDex.update();
   } catch (err) {
@@ -326,8 +389,9 @@ async function init() {
   } catch (err) {
     dexBranding = {};
   }
-  charts.daily = makeBarChart('dailyCountsChart', 'Hops', (v) => `${v}`);
+  charts.daily = makeBarChart('dailyCountsChart', 'Operations', (v) => `${v}`);
   charts.cost = makeLineChart('costChart', 'Cost', fmtUsd);
+  charts.costBreakdown = makeCostBreakdownChart('costBreakdownChart');
   charts.delay = makeLineChart('delayChart', 'Avg delay', fmtSeconds);
   charts.byDex = makeDexChart('byDexChart');
 
