@@ -5,7 +5,9 @@ from typing import cast
 
 from graph.edge import Edge
 from graph.graph import Graph
-from graph.node import Node, NodeType, SourceNode, WalletNode, WithdrawNode
+from graph.node import Node, NodeType, SourceNode, WalletDeficitNode, WalletNode, WithdrawNode
+
+_TERMINAL_NODE_TYPES = (NodeType.SourceNode, NodeType.WalletDeficit)
 
 _FLOW_EPS = 1e-9
 
@@ -123,7 +125,7 @@ def _extractOneJourney(
     touchesAmbiguous = False
     current: Node = startNode
 
-    while current.type != NodeType.SourceNode:
+    while current.type not in _TERMINAL_NODE_TYPES:
         candidates = [i for i in outEdgesByNode.get(current.nodeIndex, []) if remaining.get(i, 0.0) > _FLOW_EPS]
         if not candidates:
             return None  # flot bloqué : ne devrait pas arriver sur une solution valide du solveur
@@ -148,9 +150,15 @@ def _extractOneJourney(
     else:
         withdraw = cast(WithdrawNode, startNode)
         fromLabel, stable, fromWallet = withdraw.dex.name, withdraw.stable, False
+    if current.type == NodeType.WalletDeficit:
+        # Trajet vers un déficit wallet (retrait utilisateur, voir
+        # graph.node.WalletDeficitNode), pas vers un DEX -- pas de .dex à lire.
+        toLabel = f"User payouts ({cast(WalletDeficitNode, current).stable.name})"
+    else:
+        toLabel = cast(SourceNode, current).dex.name
     return Journey(
         fromDex=fromLabel,
-        toDex=cast(SourceNode, current).dex.name,
+        toDex=toLabel,
         amount=amount,
         stable=stable.name,
         hops=[graph.edgeList[i] for i in path],

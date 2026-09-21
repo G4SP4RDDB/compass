@@ -1,6 +1,8 @@
 import math
 from dataclasses import dataclass
+from typing import cast
 
+from graph.node import Node, NodeType, SourceNode
 from graph.structures.DEXes import DEX
 
 
@@ -38,6 +40,18 @@ def computeDexUrgencySigma(dex: DEX) -> float:
     if not dex.positions:
         return math.inf
     return min(position.sigma for position in dex.positions)
+
+
+def computeSinkUrgencySigma(sink: Node) -> float:
+    """σ_d généralisé à n'importe quel puits déficitaire du graphe (voir
+    Graph.deficitSinks) : un SourceNode retombe sur computeDexUrgencySigma
+    (urgence de liquidation du DEX) ; un WalletDeficitNode (retrait
+    utilisateur, voir graph.node.WalletDeficitNode) n'a pas d'équivalent
+    aujourd'hui -- +inf (pas d'urgence, régime normal), comme un DEX sans
+    position ouverte, en attendant qu'un vrai SLA de retrait soit modélisé."""
+    if sink.type == NodeType.SourceNode:
+        return computeDexUrgencySigma(cast(SourceNode, sink).dex)
+    return math.inf
 
 
 def safeUrgencySigma(sigmaD: float, epsilon: float) -> float:

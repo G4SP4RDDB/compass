@@ -8,8 +8,9 @@ from typing import Any, Callable, cast
 from connectors.cowswap import COWSWAP_VENUE_NAME
 from graph.edge import Edge, EdgeType
 from graph.graph import Graph
-from graph.node import DepositNode, Node, NodeType, SourceNode, WalletNode, WithdrawNode
+from graph.node import DepositNode, Node, NodeType, SourceNode, WalletDeficitNode, WalletNode, WithdrawNode
 from graph.structures.bridges import BridgeProtocol
+from graph.solver import RouteMode
 from graph.structures.DEXes import Chain, DEX, MeasuredDelay
 from graph.urgency import TimeWeightParams
 from visualization.dex_branding import DEX_BRANDING
@@ -47,6 +48,9 @@ def _describe(node: Node) -> str:
     if node.type == NodeType.Deposit:
         n = cast(DepositNode, node)
         return f"{n.dex.name} deposit address {n.chain.name}/{n.stable.name}"
+    if node.type == NodeType.WalletDeficit:
+        n = cast(WalletDeficitNode, node)
+        return f"User payouts ({n.stable.name})"
     return node.type.name
 
 
@@ -76,6 +80,11 @@ def _hopKind(edge: Edge) -> str:
         # du registre aujourd'hui), distinct du hop "Deposit" (crédit CEX)
         # qui suit.
         return "On-chain transfer"
+    if edge.v.type == NodeType.WalletDeficit:
+        # WalletNode -> WalletDeficitNode (voir Graph._linkWalletPayouts) :
+        # règle un retrait utilisateur, un simple virement on-chain depuis le
+        # wallet -- jamais vers un DEX.
+        return "Payout"
     if edge.type == EdgeType.Swap:
         return "Swap"
     assert edge.type == EdgeType.Bridge
@@ -484,7 +493,9 @@ def _journeyDict(journey: Journey) -> dict[str, Any]:
     }
 
 
-def graphToDict(graph: Graph, timeWeightParams: TimeWeightParams | None = None) -> dict[str, Any]:
+def graphToDict(
+    graph: Graph, timeWeightParams: TimeWeightParams | None = None, mode: RouteMode | None = None
+) -> dict[str, Any]:
     """Point d'entrée unique assemblant tout ce que graph_template.html
     consomme (voir renderGraphHtml) :
       - dexNodes : un node par DEX à dessiner ;
@@ -496,9 +507,12 @@ def graphToDict(graph: Graph, timeWeightParams: TimeWeightParams | None = None) 
       - journeys : ce même plan redécomposé en trajets DEX -> DEX individuels
         (voir visualization.journeys.decomposeJourneys) ;
       - timeWeight : les paramètres λ(σ_d) réellement utilisés par le solveur
-        (voir graph.urgency.TimeWeightParams), affichés tels quels dans le
-        panneau "Cost model" du frontend — None si le solveur n'a pas tourné
-        avec un time-weighting (pas de timeWeightParams fourni)."""
+        (voir graph.urgency.TimeWeightParams) — None si le solveur n'a pas
+        tourné avec un time-weighting (pas de timeWeightParams fourni) ;
+      - routeMode : "cheapest"/"fastest"/None, le RouteMode all-or-nothing
+        (voir graph.solver.RouteMode) réellement utilisé pour CE solve —
+        lu par le toggle Cheapest/Fastest du frontend pour refléter l'état
+        actif après un rechargement de page."""
     dexNodes, paths = _computeDexPaths(graph)
     journeys = [_journeyDict(j) for j in decomposeJourneys(graph)]
     # Solde de l'operating wallet que CE graphe a offert au solveur, par
@@ -527,16 +541,22 @@ def graphToDict(graph: Graph, timeWeightParams: TimeWeightParams | None = None) 
         "operations": computeChosenOperations(graph),
         "journeys": journeys,
         "timeWeight": timeWeight,
+        "routeMode": mode.value if mode is not None else None,
         "walletNodes": walletNodes,
     }
 
 
-def renderGraphHtml(graph: Graph, outputPath: str = "graph.html", timeWeightParams: TimeWeightParams | None = None) -> None:
+def renderGraphHtml(
+    graph: Graph,
+    outputPath: str = "graph.html",
+    timeWeightParams: TimeWeightParams | None = None,
+    mode: RouteMode | None = None,
+) -> None:
     """Injecte graphToDict(graph) en JSON dans le template statique (simple
     remplacement de texte sur le placeholder __GRAPH_DATA_JSON__, voir
     visualization/web/graph_template.html) et écrit le résultat, un fichier
     HTML autonome sans serveur ni build step."""
-    data = graphToDict(graph, timeWeightParams)
+    data = graphToDict(graph, timeWeightParams, mode)
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     html = template.replace("__GRAPH_DATA_JSON__", json.dumps(data))
     Path(outputPath).write_text(html, encoding="utf-8")

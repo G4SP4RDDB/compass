@@ -21,6 +21,7 @@ NODE_COLOR_BY_TYPE = {
     NodeType.Withdraw: "khaki",
     NodeType.Wallet: "lightsteelblue",
     NodeType.Deposit: "skyblue",
+    NodeType.WalletDeficit: "salmon",
 }
 
 # Position en colonnes : Source/Withdraw -> Wallet (partagé) -> Deposit
@@ -33,6 +34,7 @@ NODE_LAYER_BY_TYPE = {
     NodeType.Withdraw: 0,
     NodeType.Wallet: 1,
     NodeType.Deposit: 2,
+    NodeType.WalletDeficit: 2,
 }
 
 EDGE_COLOR_BY_TYPE = {
@@ -50,6 +52,8 @@ def _nodeLabel(node: Node) -> str:
         return f"Wallet\n{node.chain.name}/{node.stable.name}"
     if node.type == NodeType.Deposit:
         return f"{node.dex.name}\n{node.chain.name}/{node.stable.name}"
+    if node.type == NodeType.WalletDeficit:
+        return f"Payouts due\n{node.stable.name}\nbal={node.balance:g}"
     return node.type.name
 
 

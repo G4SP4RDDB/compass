@@ -4,7 +4,7 @@ from typing import cast
 from connectors.gas import GasFeeService
 from graph import costing
 from graph.edge import Edge, EdgeType
-from graph.node import DepositNode, Node, NodeType, SourceNode, WalletNode, WithdrawNode
+from graph.node import DepositNode, Node, NodeType, SourceNode, WalletDeficitNode, WalletNode, WithdrawNode
 from graph.structures.bridges import availableBridgeProtocols
 from graph.structures.DEXes import DEX, Chain, Stable
 from graph.structures.swap import SwapVenue
@@ -25,18 +25,25 @@ class Graph:
         swapList: list[SwapVenue],
         gasFeeService: GasFeeService | None = None,
         walletBalances: dict[tuple[Chain, Stable], float] | None = None,
+        walletDeficits: dict[Stable, float] | None = None,
     ):
         """walletBalances : solde réel de l'operating wallet par (chain,
         stable), posé sur le WalletNode correspondant (voir WalletNode.balance)
         — une source bornée de plus pour le solveur, à côté des surplus DEX.
-        Absent/vide -> tous les wallets à 0 (purs nœuds de transit)."""
+        Absent/vide -> tous les wallets à 0 (purs nœuds de transit).
+        walletDeficits : argent dû à des retraits utilisateur, par stable
+        (voir WalletDeficitNode) — négatif ou zéro, jamais positif (un
+        surplus wallet se pose via walletBalances, pas ici). Absent/vide ->
+        aucun déficit wallet (comportement inchangé)."""
         self.nodeList: list[Node] = []
         self.edgeList: list[Edge] = []
         self.nodeIndex = 0
         self._gasFeeService = gasFeeService or GasFeeService()
         self._addSourceAndWithdrawNodes(dexList)
         self._addWalletNodes(walletBalances or {})
+        self._addWalletDeficitNodes(walletDeficits or {})
         self._linkWithdrawalsAndDeposits(dexList)
+        self._linkWalletPayouts()
         self._linkBridges()
         self.computeAllCosts()
         self.computeAllDelays()
@@ -80,6 +87,16 @@ class Graph:
                 balance = max(walletBalances.get((chain, stable), 0.0), 0.0)
                 self.nodeList.append(WalletNode(chain, stable, self.nodeIndex, balance=balance))
                 self.nodeIndex += 1
+
+    def _addWalletDeficitNodes(self, walletDeficits: dict[Stable, float]) -> None:
+        """Un WalletDeficitNode par stable — PARTAGÉ entre toutes les chains
+        (voir graph.node.WalletDeficitNode), pas un par (chain, stable) comme
+        WalletNode : le déficit dû à des retraits utilisateur est fongible
+        sur toute chain, câblé plus loin dans _linkWalletPayouts."""
+        for stable in Stable:
+            balance = min(walletDeficits.get(stable, 0.0), 0.0)
+            self.nodeList.append(WalletDeficitNode(stable, self.nodeIndex, balance=balance))
+            self.nodeIndex += 1
 
     def _linkWithdrawalsAndDeposits(self, dexList: list[DEX]) -> None:
         """Câble WithdrawNode -> WalletNode (retrait) et WalletNode ->
@@ -137,6 +154,27 @@ class Graph:
                         self.edgeList.append(Edge(depositNode, sourceNode))
                     else:
                         self.edgeList.append(Edge(wallet, sourceNode))
+
+    def _linkWalletPayouts(self) -> None:
+        """Câble WalletNode -> WalletDeficitNode, pour CHAQUE chain (pas
+        seulement celles d'un DEX donné, contrairement à
+        _linkWithdrawalsAndDeposits) : c'est précisément ce qui rend le
+        déficit wallet fongible sur toute chain (voir
+        graph.node.WalletDeficitNode). Un seul hop, comme le dépôt direct
+        DEX (WalletNode -> SourceNode) — payer un utilisateur est un simple
+        virement, pas de notion d'adresse de dépôt à deux étapes ici."""
+        walletDeficitByStable: dict[Stable, WalletDeficitNode] = {
+            cast(WalletDeficitNode, n).stable: cast(WalletDeficitNode, n)
+            for n in self.nodeList
+            if n.type == NodeType.WalletDeficit
+        }
+        for n in self.nodeList:
+            if n.type != NodeType.Wallet:
+                continue
+            wallet = cast(WalletNode, n)
+            walletDeficit = walletDeficitByStable.get(wallet.stable)
+            if walletDeficit is not None:
+                self.edgeList.append(Edge(wallet, walletDeficit))
 
     def _linkBridges(self) -> None:
         walletNodes = [cast(WalletNode, n) for n in self.nodeList if n.type == NodeType.Wallet]
@@ -197,6 +235,19 @@ class Graph:
             if node.type == NodeType.SourceNode and cast(SourceNode, node).balance < 0
         ]
 
+    def deficitSinks(self) -> list[Node]:
+        """Une commodité par puits déficitaire du graphe (balance < 0), DEX
+        (SourceNode) ET wallet (WalletDeficitNode) confondus, dans l'ordre où
+        ils ont été ajoutés au graphe — généralisation de deficitDexes() pour
+        graph.solver.buildModel, qui n'a besoin que de l'identité du node
+        (voir solver._addFlowConservation), pas d'un DEX précis."""
+        return [
+            node
+            for node in self.nodeList
+            if node.type in (NodeType.SourceNode, NodeType.WalletDeficit)
+            and cast(SourceNode | WalletDeficitNode, node).balance < 0
+        ]
+
     def computeAllCapacities(self) -> None:
         # Borne "infinie" pour les arêtes non contraintes par un excédent/déficit
         # (bridge, swap) : aucun flot ne peut de toute façon dépasser le total
@@ -218,6 +269,12 @@ class Graph:
 
         if edge.v.type == NodeType.SourceNode:
             return abs(cast(SourceNode, edge.v).balance)
+
+        if edge.v.type == NodeType.WalletDeficit:
+            # WalletNode -> WalletDeficitNode (voir _linkWalletPayouts) :
+            # bornée par le déficit à combler, même logique que SourceNode
+            # juste au-dessus.
+            return abs(cast(WalletDeficitNode, edge.v).balance)
 
         if edge.v.type == NodeType.Deposit:
             # WalletNode -> DepositNode (entrée dans l'adresse de dépôt propre

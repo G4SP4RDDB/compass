@@ -7,15 +7,22 @@ from connectors.config import (
 )
 from connectors.dex_imbalances import (
     DEFAULT_IMBALANCES_PATH,
+    InfeasibleImbalancesError,
     apply_dex_imbalances,
-    check_feasibility,
     load_dex_imbalances,
+    summarize_dex_imbalances,
 )
 from connectors.dex_operational_params import apply_all_dex_params
 from connectors.gas import GasFeeService
+from connectors.wallet_deficits import (
+    DEFAULT_WALLET_DEFICITS_PATH,
+    apply_wallet_deficits,
+    load_wallet_deficits,
+    total_wallet_deficit_usd,
+)
 from connectors.wallet_sources import load_wallet_sources, resolve_wallet_balances
 from graph.graph import Graph
-from graph.solver import graphSolve
+from graph.solver import RouteMode, graphSolve
 from graph.structures.DEXes import DEX, Chain, Stable
 from graph.structures.dex_registry import buildDexRegistry
 from graph.urgency import TimeWeightParams
@@ -55,9 +62,34 @@ def _fetchLiveWalletBalances() -> dict[tuple[Chain, Stable], float | None]:
         return {}
 
 
+def _checkCombinedFeasibility(
+    imbalances: dict,
+    walletDeficits: dict,
+    walletBalances: dict[tuple[Chain, Stable], float],
+) -> None:
+    """Étend connectors.dex_imbalances.check_feasibility (DEX seul) au
+    déficit wallet (retraits utilisateur, connectors.wallet_deficits) : ce
+    déficit est comblable par n'importe quel surplus, DEX OU wallet (voir
+    graph.node.WalletDeficitNode) — l'ignorer ferait déclarer infaisable un
+    déficit wallet en réalité couvert par le solde déjà présent dans
+    l'operating wallet, le cas le plus courant. Même arrondi au centime que
+    graph.solver.SCALE, pour ne pas déclarer infaisable un écart de flottant."""
+    dexSummary = summarize_dex_imbalances(imbalances)
+    totalDeficitUsd = dexSummary.totalDeficitUsd + total_wallet_deficit_usd(walletDeficits)
+    totalSurplusUsd = dexSummary.totalSurplusUsd + sum(walletBalances.values())
+    if totalDeficitUsd and round(totalDeficitUsd * 100) > round(totalSurplusUsd * 100):
+        raise InfeasibleImbalancesError(
+            f"total deficit ${totalDeficitUsd:.2f} (DEX imbalances + wallet payouts) exceeds total "
+            f"surplus ${totalSurplusUsd:.2f} (DEX imbalances + wallet balances) — raise a surplus or "
+            f"lower a deficit by ${totalDeficitUsd - totalSurplusUsd:.2f}"
+        )
+
+
 def buildAndSolveGraph(
     imbalancesPath: str | None = str(DEFAULT_IMBALANCES_PATH),
+    walletDeficitsPath: str | None = str(DEFAULT_WALLET_DEFICITS_PATH),
     walletBalances: dict[tuple[Chain, Stable], float] | None = None,
+    mode: RouteMode = RouteMode.CHEAPEST,
 ) -> tuple[Graph, dict[str, DEX], TimeWeightParams]:
     """Construit le graphe à partir des déséquilibres SAISIS À LA MAIN
     (connectors/dex_imbalances.json, édités depuis le panel "Details" du
@@ -74,12 +106,18 @@ def buildAndSolveGraph(
     imbalancesPath=None : aucun déséquilibre (tous les DEX équilibrés, plan
     vide) -- utilisé par visualization/server.py pour démarrer quand même
     quand le fichier sur disque est infaisable.
+    walletDeficitsPath : idem, mais pour connectors/wallet_deficits.json (le
+    déficit dû à des retraits utilisateur, voir connectors.wallet_deficits et
+    graph.node.WalletDeficitNode). None -> aucun déficit wallet.
     walletBalances : solde de l'operating wallet par (chain, stable) offert
     au solveur comme source bornée (voir graph.node.WalletNode.balance).
     None (défaut) -> lu en direct on-chain puis filtré par
-    connectors/wallet_sources.json (désactivation / override par paire)."""
+    connectors/wallet_sources.json (désactivation / override par paire).
+    mode : RouteMode.CHEAPEST (défaut) ou RouteMode.FASTEST, voir
+    graph.solver.RouteMode -- bascule all-or-nothing choisie côté frontend,
+    transmise telle quelle à graphSolve."""
     imbalances = load_dex_imbalances(imbalancesPath) if imbalancesPath is not None else {}
-    check_feasibility(imbalances)
+    walletDeficitsRaw = load_wallet_deficits(walletDeficitsPath) if walletDeficitsPath is not None else {}
     dexRegistry = buildDexRegistry()
     dexList = list(dexRegistry.values())
     apply_dex_imbalances(dexList, imbalances)
@@ -87,6 +125,8 @@ def buildAndSolveGraph(
 
     if walletBalances is None:
         walletBalances = resolve_wallet_balances(_fetchLiveWalletBalances(), load_wallet_sources())
+
+    _checkCombinedFeasibility(imbalances, walletDeficitsRaw, walletBalances)
 
     gasFeeService = GasFeeService() if ALCHEMY_API_KEY else _ZeroGasFeeService()
     if not ALCHEMY_API_KEY:
@@ -99,15 +139,22 @@ def buildAndSolveGraph(
         epsilon=TIME_WEIGHT_EPSILON,
     )
 
-    graph = Graph(dexList, swapList=[], gasFeeService=gasFeeService, walletBalances=walletBalances)
+    graph = Graph(
+        dexList,
+        swapList=[],
+        gasFeeService=gasFeeService,
+        walletBalances=walletBalances,
+        walletDeficits=apply_wallet_deficits(walletDeficitsRaw),
+    )
     graph.computeAllCapacities()
-    graphSolve(graph, timeWeightParams)  # peuple edge.flow sur graph.edgeList, lu par renderGraphHtml
+    graphSolve(graph, timeWeightParams, mode)  # peuple edge.flow sur graph.edgeList, lu par renderGraphHtml
 
     return graph, dexRegistry, timeWeightParams
 
 
 def main():
-    graph, dexRegistry, timeWeightParams = buildAndSolveGraph()
+    mode = RouteMode.CHEAPEST
+    graph, dexRegistry, timeWeightParams = buildAndSolveGraph(mode=mode)
 
     print(f"Graphe construit : {len(graph.nodeList)} nodes, {len(graph.edgeList)} edges")
     for name in dexRegistry:
@@ -116,7 +163,7 @@ def main():
     renderGraph(graph, outputPath="graph.png")
     print("Graphe écrit dans graph.png")
 
-    renderGraphHtml(graph, outputPath="graph.html", timeWeightParams=timeWeightParams)
+    renderGraphHtml(graph, outputPath="graph.html", timeWeightParams=timeWeightParams, mode=mode)
     print("Graphe interactif écrit dans graph.html")
 
     writeOperationsText(graph, outputPath="operations.txt")

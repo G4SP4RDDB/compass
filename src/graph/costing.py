@@ -49,6 +49,13 @@ def computeCost(edge: Edge, gasFeeService: GasFeeService) -> float:
         # frais de crédit CEX pour la chain de cette adresse de dépôt.
         return dex.depositFeeUsdByChain[cast(DepositNode, edge.u).chain]
 
+    if edge.v.type == NodeType.WalletDeficit:
+        # Paiement d'un retrait utilisateur (WalletNode -> WalletDeficitNode,
+        # voir Graph._linkWalletPayouts) : un simple virement on-chain, pas
+        # de frais de dépôt DEX (il n'y a pas de DEX ici) contrairement au
+        # dépôt direct juste au-dessus.
+        return gasFeeService.get_gas_cost_usd(cast(WalletNode, edge.u).chain, GasOperation.TRANSFER)
+
     if edge.type == EdgeType.Swap:
         # Une seule transaction on-chain, atomique, du wallet source au
         # wallet destination (voir graph.node.WalletNode) : le frais fixe de

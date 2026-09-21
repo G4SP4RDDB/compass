@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import cast
 
 from ortools.sat.python import cp_model
@@ -6,14 +7,24 @@ from connectors.exceptions import ConnectorError
 from graph import costing
 from graph.edge import Edge, EdgeType
 from graph.graph import Graph
-from graph.node import NodeType, SourceNode, WalletNode, WithdrawNode
-from graph.structures.DEXes import DEX
-from graph.urgency import TimeWeightParams, computeDexUrgencySigma, computeTimeWeight
+from graph.node import Node, NodeType, SourceNode, WalletDeficitNode, WalletNode, WithdrawNode
+from graph.urgency import TimeWeightParams, computeSinkUrgencySigma, computeTimeWeight
 
 # CP-SAT veut des coefficients entiers ; costing.py et Graph._edgeCapacity
 # travaillent en dollars flottants, donc la conversion en entiers ne se fait
 # qu'ici, à la frontière avec le solveur.
 SCALE = 1_000_000
+
+
+class RouteMode(Enum):
+    """Override discret de l'objectif, all-or-nothing (pas de ponderation) :
+    choix manuel de l'utilisateur ("Cheapest"/"Fastest" côté frontend),
+    orthogonal à/en remplacement de la ponderation continue λ(σ_d) (voir
+    graph.urgency) pour CE solve. mode=None (partout ailleurs, tests
+    compris) garde le comportement λ-blended existant, inchangé."""
+
+    CHEAPEST = "cheapest"
+    FASTEST = "fastest"
 
 
 def _scaledInt(value: float | None) -> int:
@@ -25,22 +36,31 @@ def _scaledInt(value: float | None) -> int:
 def buildModel(
     graph: Graph,
     timeWeightParams: TimeWeightParams,
-) -> tuple[cp_model.CpModel, list[cp_model.IntVar], list[cp_model.IntVar | None], list[DEX]]:
+    mode: RouteMode | None = None,
+) -> tuple[cp_model.CpModel, list[cp_model.IntVar], list[cp_model.IntVar | None], list[Node]]:
     """Construit le modèle CP-SAT de flot multi-commodité : une commodité par
-    DEX destination déficitaire (voir Graph.deficitDexes). Le coût d'une arête
-    e pour la commodité destinée au DEX d est
+    puits déficitaire du graphe (voir Graph.deficitSinks), DEX (SourceNode)
+    ET wallet (WalletDeficitNode, retraits utilisateur) confondus. Le coût
+    d'une arête e pour la commodité destinée au puits d est
         w(e, d) = Fee(e) + λ(σ_d) · Time(e)
     Fee(e) est un frais fixe payé une seule fois par arête si elle est
     utilisée par au moins une commodité (transaction on-chain partagée).
     λ(σ_d)·Time(e) est facturé par commodité utilisant l'arête (la latence
     ajoutée retarde chaque destination qui emprunte cette arête, même si la
     transaction elle-même est mutualisée).
+
+    mode (RouteMode, voir sa docstring) court-circuite ce blend pour CE
+    solve, all-or-nothing : CHEAPEST ignore Time(e) entièrement, FASTEST
+    ignore Fee(e) (et le slippage swap) entièrement et pondère Time(e) à
+    plat (1.0, pas de λ(σ_d)). mode=None garde le blend λ(σ_d) ci-dessus.
     """
     graph.computeAllCapacities()
 
-    commodities = graph.deficitDexes()
-    sigmaByDex = {dex: computeDexUrgencySigma(dex) for dex in commodities}
-    timeWeightByDex = {dex: computeTimeWeight(sigmaByDex[dex], timeWeightParams) for dex in commodities}
+    commodities = graph.deficitSinks()
+    sigmaBySink = {sink: computeSinkUrgencySigma(sink) for sink in commodities}
+    timeWeightBySink = {sink: computeTimeWeight(sigmaBySink[sink], timeWeightParams) for sink in commodities}
+    includeFee = mode != RouteMode.FASTEST
+    includeTime = mode != RouteMode.CHEAPEST
 
     model = cp_model.CpModel()
 
@@ -80,11 +100,13 @@ def buildModel(
             used = model.NewBoolVar(f"used_{i}")
             model.Add(totalFlow <= capacityScaled * used)
             usedVars.append(used)
-            objectiveTerms.append(feeScaled * used)
+            if includeFee:
+                objectiveTerms.append(feeScaled * used)
 
-        if edgeTime > 0:
-            for d, dex in enumerate(commodities):
-                timeCostScaled = _scaledInt(timeWeightByDex[dex] * edgeTime)
+        if edgeTime > 0 and includeTime:
+            for d, sink in enumerate(commodities):
+                timeWeight = 1.0 if mode == RouteMode.FASTEST else timeWeightBySink[sink]
+                timeCostScaled = _scaledInt(timeWeight * edgeTime)
                 if timeCostScaled == 0:
                     continue
                 commodityUsed = model.NewBoolVar(f"usedTime_{i}_{d}")
@@ -93,7 +115,9 @@ def buildModel(
 
     _addFlowConservation(model, graph, flowVars, commodities)
 
-    model.Minimize(sum(objectiveTerms) + sum(swapCostVars))
+    if includeFee:
+        objectiveTerms.extend(swapCostVars)
+    model.Minimize(sum(objectiveTerms))
 
     return model, totalFlowVars, usedVars, commodities
 
@@ -129,7 +153,7 @@ def _addFlowConservation(
     model: cp_model.CpModel,
     graph: Graph,
     flowVarsByEdge: list[list[cp_model.IntVar]],
-    commodities: list[DEX],
+    commodities: list[Node],
 ) -> None:
     numCommodities = len(commodities)
     outflowByNode: dict[int, list[list[cp_model.IntVar]]] = {
@@ -178,23 +202,27 @@ def _addFlowConservation(
             model.Add(sum(netOuts) <= _scaledInt(cast(WalletNode, node).balance))
             continue
 
-        # SourceNode (déficit <= 0), WithdrawNode et WalletNode à solde > 0
-        # (traités ci-dessus) sont les seuls types de nodes avec un supply
-        # non nul ; tout le reste (Deposit, Wallet vide, Bridge, Swap) est un
-        # pur nœud de transit pour chaque commodité. Le supply d'un
-        # SourceNode n'est non nul que pour la commodité de son propre DEX
-        # (une commodité par DEX déficitaire).
-        for d, dex in enumerate(commodities):
-            supply = 0
-            if node.type == NodeType.SourceNode and cast(SourceNode, node).dex is dex:
-                supply = _scaledInt(cast(SourceNode, node).balance)
+        # SourceNode/WalletDeficitNode (déficit <= 0), WithdrawNode et
+        # WalletNode à solde > 0 (traités ci-dessus) sont les seuls types de
+        # nodes avec un supply non nul ; tout le reste (Deposit, Wallet vide,
+        # Bridge, Swap) est un pur nœud de transit pour chaque commodité. Le
+        # supply d'un puits déficitaire n'est non nul QUE pour SA PROPRE
+        # commodité (une commodité par puits déficitaire, voir
+        # Graph.deficitSinks) -- identité du node, pas égalité de DEX : ça
+        # marche pareil pour un SourceNode (DEX) ou un WalletDeficitNode
+        # (retrait utilisateur, fongible entre chains via WalletNode, voir
+        # graph.node.WalletDeficitNode).
+        for d, sink in enumerate(commodities):
+            supply = _scaledInt(cast(SourceNode | WalletDeficitNode, node).balance) if node is sink else 0
             model.Add(
                 sum(outflowByNode[node.nodeIndex][d]) - sum(inflowByNode[node.nodeIndex][d]) == supply
             )
 
 
-def graphSolve(graph: Graph, timeWeightParams: TimeWeightParams) -> cp_model.CpSolver:
-    model, totalFlowVars, _, _ = buildModel(graph, timeWeightParams)
+def graphSolve(
+    graph: Graph, timeWeightParams: TimeWeightParams, mode: RouteMode | None = None
+) -> cp_model.CpSolver:
+    model, totalFlowVars, _, _ = buildModel(graph, timeWeightParams, mode)
 
     solver = cp_model.CpSolver()
     status = solver.Solve(model)

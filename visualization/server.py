@@ -1,5 +1,5 @@
-"""Petit serveur HTTP derrière les onglets "Config" et le curseur k de
-graph_template.html.
+"""Petit serveur HTTP derrière les onglets "Config" et le toggle
+Cheapest/Fastest de graph_template.html.
 
 src/main.py ne produit que des fichiers statiques (graph.html, graph.png,
 operations.txt) — rien ne les sert, et l'onglet "Config" se contentait
@@ -10,20 +10,28 @@ en production, n'a qu'une URL vers cette page et pas accès au code.
 Ce serveur sert graph.html, expose une petite API JSON que le JS de la page
 appelle directement pour lire/écrire connectors/dex_operational_params.json
 sur cette machine, et garde en mémoire le Graph construit au démarrage pour
-re-solver à la volée quand l'utilisateur bouge le curseur k dans la barre
-au-dessus du graphe (voir POST /api/solve) : Fee(e)/Time(e) par arête ne
-dépendent pas de k (voir costing.py), seul le plan choisi par le solveur CP-
-SAT en dépend, donc pas besoin de reconstruire tout le graphe à chaque fois.
-Le bouton "Run solver" (POST /api/recompute) fait, lui, l'inverse :
-reconstruit tout depuis zéro à partir des déséquilibres SAISIS À LA MAIN
-(GET/POST /api/imbalances <-> connectors/dex_imbalances.json, édités depuis
-le panel "Details" d'un DEX — voir connectors.dex_imbalances), exactement
-ce que fait `python src/main.py`. Plus aucun tirage aléatoire.
+re-solver à la volée quand l'utilisateur bascule le toggle Cheapest/Fastest
+au-dessus du graphe (voir POST /api/solve, graph.solver.RouteMode) : Fee(e)/
+Time(e) par arête ne dépendent pas du RouteMode (voir costing.py), seul le
+plan choisi par le solveur CP-SAT en dépend, donc pas besoin de reconstruire
+tout le graphe à chaque fois. Le bouton "Run solver" (POST /api/recompute)
+fait, lui, l'inverse : reconstruit tout depuis zéro à partir des
+déséquilibres SAISIS À LA MAIN (GET/POST /api/imbalances <->
+connectors/dex_imbalances.json, édités depuis le panel "Details" d'un DEX —
+voir connectors.dex_imbalances), exactement ce que fait `python src/main.py`,
+en conservant le RouteMode actif. Plus aucun tirage aléatoire.
 
 GET/POST /api/wallet-sources : par (chain, stable), le solveur peut-il
 puiser dans le solde réel de l'operating wallet (et jusqu'à combien) --
 connectors/wallet_sources.json, panel Details d'un nœud Wallet. Le solde
 lui-même est lu on-chain au build (main.buildAndSolveGraph).
+
+GET/POST /api/wallet-deficits : déficit SAISI À LA MAIN dû à des retraits
+utilisateur, par stable (connectors/wallet_deficits.json, voir
+connectors.wallet_deficits et graph.node.WalletDeficitNode) -- même panel
+manuel que /api/imbalances, mais ce déficit n'appartient à aucun DEX : il
+est fongible sur TOUTE chain (contrairement à un déficit DEX, limité aux
+chains de ce DEX).
 
 GET /api/execution-status dit au frontend si un bouton "Execute" (exécution
 LIVE d'un hop choisi par le solveur, montant = flot du solveur) peut
@@ -82,6 +90,12 @@ from connectors.dex_imbalances import (
     validate_dex_imbalances,
 )
 from connectors.dex_measured_delays import load_measured_delays
+from connectors.wallet_deficits import (
+    load_wallet_deficits,
+    save_wallet_deficits,
+    total_wallet_deficit_usd,
+    validate_wallet_deficits,
+)
 from connectors.wallet_sources import load_wallet_sources, save_wallet_sources, validate_wallet_sources
 from connectors.dex_operational_params import (
     CONFIG_FIELDS,
@@ -89,8 +103,7 @@ from connectors.dex_operational_params import (
     save_dex_operational_params,
 )
 from graph.structures.DEXes import Chain
-from graph.solver import graphSolve
-from graph.urgency import TimeWeightParams
+from graph.solver import RouteMode, graphSolve
 from main import buildAndSolveGraph
 from visualization.dex_branding import DEX_BRANDING
 from visualization.graph_view import renderGraph
@@ -111,12 +124,13 @@ app = Flask(__name__)
 # depuis la page : on construit alors le graphe SANS déséquilibre (plan
 # vide) et on garde le message pour le frontend (GET /api/imbalances).
 _startupImbalanceProblem: str | None = None
+_routeMode: RouteMode = RouteMode.CHEAPEST
 try:
-    _graph, _dexRegistry, _timeWeightParams = buildAndSolveGraph()
+    _graph, _dexRegistry, _timeWeightParams = buildAndSolveGraph(mode=_routeMode)
 except InfeasibleImbalancesError as exc:
     _startupImbalanceProblem = str(exc)
-    _graph, _dexRegistry, _timeWeightParams = buildAndSolveGraph(imbalancesPath=None)
-renderGraphHtml(_graph, outputPath=str(GRAPH_HTML_PATH), timeWeightParams=_timeWeightParams)
+    _graph, _dexRegistry, _timeWeightParams = buildAndSolveGraph(imbalancesPath=None, mode=_routeMode)
+renderGraphHtml(_graph, outputPath=str(GRAPH_HTML_PATH), timeWeightParams=_timeWeightParams, mode=_routeMode)
 
 
 _VALID_CHAIN_NAMES = {c.name for c in Chain}
@@ -196,28 +210,24 @@ def getMeasuredDelays():
 
 @app.post("/api/solve")
 def postSolve():
-    """Re-solve le graphe déjà en mémoire avec un nouveau k, sans le
-    reconstruire (voir le commentaire au chargement du module). Retourne le
-    même format que graphToDict pour que le JS puisse patcher operations/
-    journeys/timeWeight en place (voir refreshFromSolveResult côté frontend)."""
-    global _timeWeightParams
+    """Re-solve le graphe déjà en mémoire avec un nouveau RouteMode
+    (Cheapest/Fastest, voir graph.solver.RouteMode), sans le reconstruire
+    (voir le commentaire au chargement du module). Retourne le même format
+    que graphToDict pour que la page rechargée reflète le nouveau plan et le
+    toggle actif (GRAPH_DATA.routeMode)."""
+    global _routeMode
     try:
         payload = request.get_json(force=True, silent=False)
-        k = float(payload["k"])
+        mode = RouteMode(payload["mode"])
+    except (KeyError, ValueError, TypeError):
+        return jsonify({"error": "request body must be JSON {\"mode\": \"cheapest\"|\"fastest\"}"}), 400
     except Exception:
-        return jsonify({"error": "request body must be JSON {\"k\": <number>}"}), 400
-    if k <= 0:
-        return jsonify({"error": "k must be strictly positive"}), 400
+        return jsonify({"error": "request body must be valid JSON"}), 400
 
-    _timeWeightParams = TimeWeightParams(
-        lambda_min=_timeWeightParams.lambda_min,
-        lambda_max=_timeWeightParams.lambda_max,
-        k=k,
-        epsilon=_timeWeightParams.epsilon,
-    )
-    graphSolve(_graph, _timeWeightParams)  # remplace edge.flow sur _graph.edgeList
-    renderGraphHtml(_graph, outputPath=str(GRAPH_HTML_PATH), timeWeightParams=_timeWeightParams)
-    return jsonify(graphToDict(_graph, _timeWeightParams))
+    _routeMode = mode
+    graphSolve(_graph, _timeWeightParams, _routeMode)  # remplace edge.flow sur _graph.edgeList
+    renderGraphHtml(_graph, outputPath=str(GRAPH_HTML_PATH), timeWeightParams=_timeWeightParams, mode=_routeMode)
+    return jsonify(graphToDict(_graph, _timeWeightParams, _routeMode))
 
 
 @app.get("/api/imbalances")
@@ -250,6 +260,33 @@ def postImbalances():
         return jsonify({"error": "request body must be valid JSON"}), 400
     save_dex_imbalances(cleaned)
     return jsonify({"imbalances": cleaned, "summary": summarize_dex_imbalances(cleaned).to_dict()})
+
+
+@app.get("/api/wallet-deficits")
+def getWalletDeficits():
+    """Déficit dû à des retraits utilisateur, par stable (connectors/wallet_deficits.json,
+    voir connectors.wallet_deficits et graph.node.WalletDeficitNode) -- même
+    panel manuel que GET/POST /api/imbalances, mais keyé par stable (ce
+    déficit n'appartient à aucun DEX, il est partagé entre toutes les
+    chains)."""
+    deficits = load_wallet_deficits()
+    return jsonify({"walletDeficits": deficits, "totalUsd": total_wallet_deficit_usd(deficits)})
+
+
+@app.post("/api/wallet-deficits")
+def postWalletDeficits():
+    """Remplace le fichier entier par {stableName: entry} (voir
+    connectors.wallet_deficits pour le format ; null / kind null = pas de
+    déficit sur cette stable). Ne reconstruit PAS le graphe : c'est POST
+    /api/recompute ("Run solver") qui le fait, comme pour /api/imbalances."""
+    try:
+        cleaned = validate_wallet_deficits(request.get_json(force=True, silent=False))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        return jsonify({"error": "request body must be valid JSON"}), 400
+    save_wallet_deficits(cleaned)
+    return jsonify({"walletDeficits": cleaned, "totalUsd": total_wallet_deficit_usd(cleaned)})
 
 
 @app.get("/api/wallet-sources")
@@ -299,7 +336,8 @@ def postRecompute():
     """Reconstruit tout le graphe from scratch à partir des déséquilibres
     saisis à la main (connectors/dex_imbalances.json, voir POST
     /api/imbalances), nouveau TimeWeightParams par défaut (voir
-    main.buildAndSolveGraph) — exactement ce que fait `python src/main.py`,
+    main.buildAndSolveGraph), en conservant le RouteMode actif (_routeMode,
+    voir POST /api/solve) — exactement ce que fait `python src/main.py`,
     mais in-process : _graph/_dexRegistry/_timeWeightParams sont réassignés
     ici plutôt que lancés dans un sous-process, pour que POST /api/solve
     continue ensuite à re-solver CETTE instance à jour plutôt qu'une copie
@@ -310,16 +348,16 @@ def postRecompute():
     graphe en mémoire reste l'ancien."""
     global _graph, _dexRegistry, _timeWeightParams, _startupImbalanceProblem
     try:
-        _graph, _dexRegistry, _timeWeightParams = buildAndSolveGraph()
+        _graph, _dexRegistry, _timeWeightParams = buildAndSolveGraph(mode=_routeMode)
     except InfeasibleImbalancesError as exc:
         return jsonify({"error": str(exc)}), 400
     except RuntimeError as exc:  # solveur sans solution malgré la pré-vérification
         return jsonify({"error": f"solver failed: {exc}"}), 400
     _startupImbalanceProblem = None
     renderGraph(_graph, outputPath=str(GRAPH_PNG_PATH))
-    renderGraphHtml(_graph, outputPath=str(GRAPH_HTML_PATH), timeWeightParams=_timeWeightParams)
+    renderGraphHtml(_graph, outputPath=str(GRAPH_HTML_PATH), timeWeightParams=_timeWeightParams, mode=_routeMode)
     writeOperationsText(_graph, outputPath=str(OPERATIONS_TXT_PATH))
-    return jsonify(graphToDict(_graph, _timeWeightParams))
+    return jsonify(graphToDict(_graph, _timeWeightParams, _routeMode))
 
 
 @app.get("/api/test-runs")
