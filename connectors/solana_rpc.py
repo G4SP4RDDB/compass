@@ -17,6 +17,15 @@ LAMPORTS_PER_SIGNATURE = 5000
 LAMPORTS_PER_SOL = 1_000_000_000
 DEFAULT_COMPUTE_UNITS = 200_000
 
+# Circle's own Solana mainnet USDC mint (developers.circle.com/stablecoins,
+# cross-checked against the SPL token list) — verified 2026-09-22, same
+# address connectors/cctp.py mints into as the destination of the
+# Arbitrum->Solana withdraw pipeline. Solana has no natively-issued USDT
+# used anywhere in this project's CCTP path (CCTP itself is USDC-only, see
+# graph.structures.bridges._CCTP_CHAINS), so unlike EVM chains there is no
+# second mint to track here.
+SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
 
 class SolanaRPCConnector:
     def __init__(self, alchemy: AlchemyConnector | None = None) -> None:
@@ -69,6 +78,33 @@ class SolanaRPCConnector:
             native_symbol=metadata.native_symbol,
             usd_amount=usd_amount,
         )
+
+    def get_usdc_balance_usd(self, owner_address: str) -> float:
+        """Real on-chain USDC balance for `owner_address` (a base58 Solana
+        pubkey), summed across every SPL token account it holds for the USDC
+        mint — same "PARTIAL DERISKING" spirit as get_stable_balance_usd on
+        the EVM side (compass_test/chain_ops.py), but there's no single
+        canonical account to assume here: getTokenAccountsByOwner filtered
+        by mint returns every matching account (normally just the one
+        Associated Token Account, but nothing stops more existing), and
+        summing all of them is the only way to not silently undercount.
+        Zero accounts (never received USDC yet, e.g. before this wallet's
+        first CCTP mint) is a normal, non-error 0.0, not a missing-account
+        failure — mirrors the EVM ERC-20 balanceOf convention, which also
+        returns 0 for an address that's never held the token."""
+        result = self._rpc(
+            "getTokenAccountsByOwner",
+            [
+                owner_address,
+                {"mint": SOLANA_USDC_MINT},
+                {"encoding": "jsonParsed"},
+            ],
+        )
+        total = 0.0
+        for entry in result["value"]:
+            amount_info = entry["account"]["data"]["parsed"]["info"]["tokenAmount"]
+            total += float(amount_info["uiAmountString"])
+        return total
 
     def get_slot_time_ms(self, slot_lookback: int = 100) -> float:
         current_slot = self._rpc("getSlot")

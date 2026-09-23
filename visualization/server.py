@@ -27,11 +27,12 @@ connectors/wallet_sources.json, panel Details d'un nœud Wallet. Le solde
 lui-même est lu on-chain au build (main.buildAndSolveGraph).
 
 GET/POST /api/wallet-deficits : déficit SAISI À LA MAIN dû à des retraits
-utilisateur, par stable (connectors/wallet_deficits.json, voir
+utilisateur, EN USD (connectors/wallet_deficits.json, voir
 connectors.wallet_deficits et graph.node.WalletDeficitNode) -- même panel
-manuel que /api/imbalances, mais ce déficit n'appartient à aucun DEX : il
-est fongible sur TOUTE chain (contrairement à un déficit DEX, limité aux
-chains de ce DEX).
+manuel que /api/imbalances, mais ce déficit n'appartient à aucun DEX ni à
+aucune stable : il est fongible sur TOUTE chain ET TOUTE stable
+(contrairement à un déficit DEX, limité aux chains de ce DEX et jamais
+convertible entre stables sans un swap).
 
 GET /api/execution-status dit au frontend si un bouton "Execute" (exécution
 LIVE d'un hop choisi par le solveur, montant = flot du solveur) peut
@@ -264,21 +265,21 @@ def postImbalances():
 
 @app.get("/api/wallet-deficits")
 def getWalletDeficits():
-    """Déficit dû à des retraits utilisateur, par stable (connectors/wallet_deficits.json,
+    """Déficit dû à des retraits utilisateur, EN USD (connectors/wallet_deficits.json,
     voir connectors.wallet_deficits et graph.node.WalletDeficitNode) -- même
-    panel manuel que GET/POST /api/imbalances, mais keyé par stable (ce
-    déficit n'appartient à aucun DEX, il est partagé entre toutes les
-    chains)."""
-    deficits = load_wallet_deficits()
-    return jsonify({"walletDeficits": deficits, "totalUsd": total_wallet_deficit_usd(deficits)})
+    panel manuel que GET/POST /api/imbalances, mais un SEUL montant (ce
+    déficit n'appartient à aucun DEX ni aucune stable, il est partagé entre
+    toutes les chains ET toutes les stables)."""
+    deficit = load_wallet_deficits()
+    return jsonify({"walletDeficit": deficit, "totalUsd": total_wallet_deficit_usd(deficit)})
 
 
 @app.post("/api/wallet-deficits")
 def postWalletDeficits():
-    """Remplace le fichier entier par {stableName: entry} (voir
+    """Remplace le fichier entier par {"kind": "deficit", "amountUsd": x} (voir
     connectors.wallet_deficits pour le format ; null / kind null = pas de
-    déficit sur cette stable). Ne reconstruit PAS le graphe : c'est POST
-    /api/recompute ("Run solver") qui le fait, comme pour /api/imbalances."""
+    déficit). Ne reconstruit PAS le graphe : c'est POST /api/recompute
+    ("Run solver") qui le fait, comme pour /api/imbalances."""
     try:
         cleaned = validate_wallet_deficits(request.get_json(force=True, silent=False))
     except ValueError as exc:
@@ -286,7 +287,7 @@ def postWalletDeficits():
     except Exception:
         return jsonify({"error": "request body must be valid JSON"}), 400
     save_wallet_deficits(cleaned)
-    return jsonify({"walletDeficits": cleaned, "totalUsd": total_wallet_deficit_usd(cleaned)})
+    return jsonify({"walletDeficit": cleaned, "totalUsd": total_wallet_deficit_usd(cleaned)})
 
 
 @app.get("/api/wallet-sources")

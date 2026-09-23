@@ -6,7 +6,7 @@ from connectors.gas import GasFeeService, GasOperation
 from connectors.stable_tokens import get_stable_decimals, get_stable_token_address
 from graph.edge import Edge, EdgeType
 from graph.node import DepositNode, NodeType, SourceNode, WalletNode, WithdrawNode
-from graph.structures.bridges import adenBridgeFeeUsd
+from graph.structures.bridges import BridgeProtocol, bridgeFeeUsd
 from graph.structures.DEXes import MeasuredDelay
 from graph.urgency import TimeWeightParams, computeTimeWeight
 
@@ -15,6 +15,18 @@ from graph.urgency import TimeWeightParams, computeTimeWeight
 # conservateur plutôt qu'un 0.0 qui biaiserait le solveur en sa faveur alors
 # qu'on ne connaît pas sa vitesse réelle -- à affiner avec de vraies données.
 ADEN_INTERNAL_BRIDGE_DELAY_SECONDS = 20 * 60
+
+# CCTP V1 (Standard Transfer) attend la finalité de la chain SOURCE avant que
+# la destination puisse minter : Arbitrum, en tant que L2 optimistic, hérite
+# du délai de finalité Ethereum (~13-19 min, milieu de la fourchette pris ici)
+# -- ordre de grandeur documenté par Circle, pas mesuré en live (même
+# réserve que ADEN_INTERNAL_BRIDGE_DELAY_SECONDS ci-dessus).
+CCTP_BRIDGE_DELAY_SECONDS = 16 * 60
+
+_BRIDGE_DELAY_SECONDS_BY_PROTOCOL: dict[BridgeProtocol, float] = {
+    BridgeProtocol.ADEN_INTERNAL: ADEN_INTERNAL_BRIDGE_DELAY_SECONDS,
+    BridgeProtocol.CCTP: CCTP_BRIDGE_DELAY_SECONDS,
+}
 
 
 def computeCost(edge: Edge, gasFeeService: GasFeeService) -> float:
@@ -66,14 +78,14 @@ def computeCost(edge: Edge, gasFeeService: GasFeeService) -> float:
     if edge.type == EdgeType.Bridge:
         # Bridge traverse deux chains différentes en un seul appel de contrat :
         # le gas est payé une seule fois, sur la chain de départ, pour toute
-        # l'opération. Seule route bridgée aujourd'hui : le bridge interne
-        # d'Aden entre BSC et Arbitrum (voir graph.structures.bridges), qui
-        # facture EN PLUS son propre frais fixe, PAR SENS (pas symétrique) --
-        # même logique que gas + dex.depositFeeUsd juste au-dessus, mais côté
-        # bridge plutôt que côté dépôt.
+        # l'opération. Deux protocoles aujourd'hui (voir graph.structures.bridges) :
+        # le bridge interne d'Aden (BSC<->Arbitrum) et CCTP (Arbitrum<->Solana,
+        # USDC), chacun avec son propre frais fixe EN PLUS du gas, voir
+        # bridgeFeeUsd -- même logique que gas + dex.depositFeeUsd juste
+        # au-dessus, mais côté bridge plutôt que côté dépôt.
         assert edge.bridgeProtocol is not None
         gasCost = gasFeeService.get_bridge_gas_cost_usd(edge.u.chain, edge.v.chain, edge.bridgeProtocol)
-        return gasCost + adenBridgeFeeUsd(edge.u.chain, edge.v.chain)
+        return gasCost + bridgeFeeUsd(edge.bridgeProtocol, edge.u.chain, edge.v.chain)
 
     if edge.v.type == NodeType.Deposit:
         # Wallet->DepositNode (entrée CEX-style, voir DEX.requiresDepositAddress) :
@@ -265,9 +277,5 @@ def computeConfiguredDelay(edge: Edge) -> float:
 
 
 def computeBridgeDelay(edge: Edge) -> float:
-    # Un seul protocole existe aujourd'hui (voir graph.structures.bridges.
-    # BridgeProtocol) : pas de branchement à faire, juste le placeholder
-    # conservateur ci-dessus tant qu'on n'a pas de vraie donnée sur le bridge
-    # interne d'Aden.
     assert edge.bridgeProtocol is not None
-    return ADEN_INTERNAL_BRIDGE_DELAY_SECONDS
+    return _BRIDGE_DELAY_SECONDS_BY_PROTOCOL[edge.bridgeProtocol]

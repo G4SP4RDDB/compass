@@ -5,15 +5,18 @@ chosen journeys (visualization/journeys.decomposeJourneys — the exact
 decomposition operations.txt and the 'Chosen Operations' tab already use)
 down to the Withdraw/Deposit hops compass_test can actually execute.
 
-A Bridge hop (cross-chain same-stable move, graph.structures.bridges.
-BridgeProtocol.ADEN_INTERNAL — the only protocol modeled) IS instrumented,
-through Aden's own deposit/withdraw ledger (runners/aden.py), for USDT on
-BSC<->Arbitrum only — Aden's supported_chains/supported_stables. A journey
-whose Bridge leg falls outside that (a different stable, since
-availableBridgeProtocols models the route as open to any stable even though
-only Aden's own USDT is actually instrumented) is marked out of scope with a
-reason, same pattern as an unsupported Swap pair below — never silently
-dropping just that leg while still running the rest.
+A Bridge hop (cross-chain same-stable move) IS instrumented for both
+protocols graph.structures.bridges models: ADEN_INTERNAL, through Aden's own
+deposit/withdraw ledger (runners/aden.py), for USDT on BSC<->Arbitrum only —
+Aden's supported_chains/supported_stables; and CCTP, through Circle's own
+burn/attestation/mint pipeline (connectors/cctp.py, cctp_runner.py), for
+USDC on ARBITRUM<->SOLANA only — the one route this project's withdraw
+pipeline actually uses (see graph.structures.bridges._CCTP_CHAINS). A
+journey whose Bridge leg falls outside either of those (a different stable
+on a route ADEN_INTERNAL nominally covers, or any CCTP pair beyond
+Arbitrum<->Solana) is marked out of scope with a reason, same pattern as an
+unsupported Swap pair below — never silently dropping just that leg while
+still running the rest.
 Swap hops (same-chain USDC <-> USDT) ARE instrumented, through CoW Swap
 (runners/cowswap.py), on BSC and Arbitrum only.
 """
@@ -31,7 +34,7 @@ from graph import costing
 from graph.edge import Edge, EdgeType
 from graph.graph import Graph
 from graph.node import NodeType, SourceNode, WalletNode, WithdrawNode
-from graph.structures.bridges import BridgeProtocol
+from graph.structures.bridges import BridgeProtocol, availableBridgeProtocols
 from graph.structures.DEXes import DEX, Chain, Stable
 from graph.structures.dex_registry import buildDexRegistry
 from main import buildAndSolveGraph
@@ -58,9 +61,11 @@ def build_solved_graph() -> Graph:
     return graph
 
 
-# The only bridge protocol modeled (graph.structures.bridges.BridgeProtocol)
-# -> the DEX whose ledger actually implements it.
-_BRIDGE_DEX_NAME = {BridgeProtocol.ADEN_INTERNAL: "Aden"}
+# graph.structures.bridges.BridgeProtocol -> the venue whose ledger actually
+# implements it. CCTP has no real DEX behind it (see compass_test/cctp_runner.py)
+# — "CCTP" here is a protocol sentinel, same role COWSWAP_VENUE_NAME plays
+# for a Swap hop's `dex`, not a runners/registry.py entry.
+_BRIDGE_DEX_NAME = {BridgeProtocol.ADEN_INTERNAL: "Aden", BridgeProtocol.CCTP: "CCTP"}
 
 
 def _hop_type(edge: Edge) -> HopType | None:
@@ -159,25 +164,31 @@ def list_planned_journeys(graph: Graph) -> list[PlannedJourney]:
         )
         if unsupportedSwaps:
             reasons.append(f"swap not instrumented ({COWSWAP_VENUE_NAME} is wired for BSC/Arbitrum only): {', '.join(unsupportedSwaps)}")
-        # availableBridgeProtocols models ADEN_INTERNAL as open to any stable
-        # (see graph.structures.bridges), but only Aden's own USDT ledger is
-        # actually instrumented — a Bridge hop outside Aden's real
-        # supported_chains/supported_stables is out of scope, same as an
-        # unsupported swap pair above, not a reason to drop the whole journey.
+        # availableBridgeProtocols models each protocol as open to any stable
+        # it covers (see graph.structures.bridges), but only what each
+        # protocol's own connector actually instruments is in scope: Aden's
+        # own USDT ledger (AdenConnector.supported_*) for ADEN_INTERNAL, and
+        # ARBITRUM<->SOLANA USDC (the only route compass_test/cctp_runner.py
+        # implements) for CCTP — a Bridge hop outside either is out of
+        # scope, same as an unsupported swap pair above, not a reason to
+        # drop the whole journey.
+        def _bridge_hop_supported(h: PlannedHop) -> bool:
+            if h.dex == "CCTP":
+                return Stable[h.stable] == Stable.USDC and Chain[h.chain] == Chain.ARBITRUM and Chain[h.toChain] == Chain.SOLANA
+            return (
+                Stable[h.stable] in AdenConnector.supported_stables
+                and Chain[h.chain] in AdenConnector.supported_chains
+                and Chain[h.toChain] in AdenConnector.supported_chains
+            )
+
         unsupportedBridges = sorted(
-            {
-                f"{h.stable} {h.chain}->{h.toChain}"
-                for h in hops
-                if h.hopType == HopType.BRIDGE
-                and not (
-                    Stable[h.stable] in AdenConnector.supported_stables
-                    and Chain[h.chain] in AdenConnector.supported_chains
-                    and Chain[h.toChain] in AdenConnector.supported_chains
-                )
-            }
+            {f"{h.stable} {h.chain}->{h.toChain}" for h in hops if h.hopType == HopType.BRIDGE and not _bridge_hop_supported(h)}
         )
         if unsupportedBridges:
-            reasons.append(f"bridge not instrumented (Aden USDT, BSC<->Arbitrum only): {', '.join(unsupportedBridges)}")
+            reasons.append(
+                f"bridge not instrumented (Aden USDT BSC<->Arbitrum, or CCTP USDC Arbitrum<->Solana, only): "
+                f"{', '.join(unsupportedBridges)}"
+            )
         planned.append(
             PlannedJourney(
                 fromDex=journey.fromDex,
@@ -254,20 +265,32 @@ def build_bridge_hop_estimate(
     """Bridge counterpart of build_hop_estimate/build_swap_hop_estimate: the
     solver's own estimate for a WalletNode(fromChain, stable) ->
     WalletNode(toChain, stable) EdgeType.Bridge edge (Graph._linkBridges
-    shape) — Fee(e) = Aden's bridge gas + its flat per-direction fee
-    (costing.computeCost), Time(e) the conservative placeholder
-    (costing.computeBridgeDelay, no measured feedback loop for Bridge yet).
-    ADEN_INTERNAL is the only protocol modeled (graph.structures.bridges)."""
+    shape) — Fee(e)/Time(e) via costing.computeCost/computeDelay, exactly
+    as the solved graph itself would compute them for this edge. Protocol
+    picked the same way Graph._linkBridges itself picks it: whatever
+    availableBridgeProtocols returns for this (fromChain, toChain, stable) —
+    ADEN_INTERNAL for BSC<->ARBITRUM, CCTP for ARBITRUM<->SOLANA USDC (see
+    graph.structures.bridges) — never guessed or hardcoded here. Raises if
+    neither protocol covers the route (mirrors availableBridgeProtocols
+    returning an empty list, i.e. "no bridge edge at all between these two
+    chains for this stable")."""
     gasFeeService = gasFeeService or GasFeeService()
+    protocols = availableBridgeProtocols(fromChain, toChain, stable)
+    if not protocols:
+        raise ValueError(f"no bridge protocol covers {stable.name} {fromChain.name}->{toChain.name}")
+    # Only one protocol ever covers a given (fromChain, toChain) pair today
+    # (ADEN_INTERNAL and CCTP's chain sets don't overlap) — first is fine,
+    # not an arbitrary tiebreak.
+    protocol = protocols[0]
     edge = Edge(
         WalletNode(fromChain, stable, nodeIndex=0),
         WalletNode(toChain, stable, nodeIndex=1),
         type=EdgeType.Bridge,
-        bridgeProtocol=BridgeProtocol.ADEN_INTERNAL,
+        bridgeProtocol=protocol,
     )
     return PlannedHop(
         hopType=HopType.BRIDGE,
-        dex=_BRIDGE_DEX_NAME[BridgeProtocol.ADEN_INTERNAL],
+        dex=_BRIDGE_DEX_NAME[protocol],
         chain=fromChain.name,
         toChain=toChain.name,
         stable=stable.name,

@@ -8,7 +8,7 @@ from typing import Any, Callable, cast
 from connectors.cowswap import COWSWAP_VENUE_NAME
 from graph.edge import Edge, EdgeType
 from graph.graph import Graph
-from graph.node import DepositNode, Node, NodeType, SourceNode, WalletDeficitNode, WalletNode, WithdrawNode
+from graph.node import DepositNode, Node, NodeType, SourceNode, WalletNode, WithdrawNode
 from graph.structures.bridges import BridgeProtocol
 from graph.solver import RouteMode
 from graph.structures.DEXes import Chain, DEX, MeasuredDelay
@@ -49,8 +49,7 @@ def _describe(node: Node) -> str:
         n = cast(DepositNode, node)
         return f"{n.dex.name} deposit address {n.chain.name}/{n.stable.name}"
     if node.type == NodeType.WalletDeficit:
-        n = cast(WalletDeficitNode, node)
-        return f"User payouts ({n.stable.name})"
+        return "User payouts"
     return node.type.name
 
 
@@ -93,6 +92,7 @@ def _hopKind(edge: Edge) -> str:
 
 _BRIDGE_PROTOCOL_LABEL: dict[BridgeProtocol, str] = {
     BridgeProtocol.ADEN_INTERNAL: "Aden internal bridge",
+    BridgeProtocol.CCTP: "CCTP (Circle)",
 }
 
 

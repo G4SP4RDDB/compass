@@ -299,9 +299,14 @@ class WalletBalanceResult:
 # (an exchange account's equity) and from a WalletNode in the SOLVED graph
 # (which only ever means "money in transit through this hop", never a
 # standing balance) — this is the one place a WalletNode's balance is a real,
-# persistent, queryable fact. Scoped for now to USDC/USDT on
-# Arbitrum/BSC, per instruction — the same four (chain, stable) pairs
-# stable_tokens.py already has verified contract addresses for.
+# persistent, queryable fact. Scoped to USDC/USDT on Arbitrum/BSC (the four
+# (chain, stable) pairs stable_tokens.py has verified ERC-20 contract
+# addresses for) plus USDC on SOLANA — the destination of the
+# Arbitrum->Solana CCTP withdraw pipeline (see connectors/cctp.py), read via
+# connectors.solana_rpc instead of chain_ops (SPL token account, not an
+# ERC-20 — see get_wallet_balance_usd's SOLANA branch). No Solana USDT here:
+# CCTP itself is USDC-only (graph.structures.bridges._CCTP_CHAINS), so
+# nothing in this project's pipeline ever puts USDT on that wallet.
 def _wallet_targets() -> list[tuple]:
     # Built lazily (not at import time): needs `graph.structures.DEXes`,
     # which needs `src` on sys.path — already guaranteed once compass_test's
@@ -314,22 +319,39 @@ def _wallet_targets() -> list[tuple]:
         (Chain.ARBITRUM, Stable.USDT),
         (Chain.BSC, Stable.USDC),
         (Chain.BSC, Stable.USDT),
+        (Chain.SOLANA, Stable.USDC),
     ]
 
 
 def get_wallet_balance_usd(chain, stable) -> WalletBalanceResult:
-    """Real on-chain ERC-20 balanceOf for the operating wallet, on `chain` in
-    `stable`. Needs only the wallet's PUBLIC address (config.
-    OPERATING_WALLET_ADDRESS, or derived from the signing key if that isn't
-    set) — a plain read, no private key material required to actually
-    resolve it. Never raises — same contract as get_real_balance_usd."""
-    from . import chain_ops, config
-    from .wallet import OperatingWallet
+    """Real on-chain balance for the operating wallet, on `chain` in
+    `stable`: ERC-20 balanceOf for an EVM chain, SPL token account sum for
+    SOLANA (see connectors.solana_rpc.get_usdc_balance_usd — a fundamentally
+    different read, so branched here rather than forced through chain_ops,
+    which is EVM/web3-only end to end). Needs only the wallet's PUBLIC
+    address (config.OPERATING_WALLET_ADDRESS / config.SOLANA_WALLET_ADDRESS,
+    or derived from the signing key if that isn't set) — a plain read, no
+    private key material required to actually resolve it. Never raises —
+    same contract as get_real_balance_usd."""
+    from graph.structures.DEXes import Chain
+
+    from . import config
 
     try:
-        wallet = OperatingWallet(known_address=config.OPERATING_WALLET_ADDRESS)
-        w3 = chain_ops.get_web3(chain)
-        balance = chain_ops.get_stable_balance_usd(w3, chain, stable, wallet.address)
+        if chain == Chain.SOLANA:
+            from connectors.solana_rpc import SolanaRPCConnector
+
+            from .solana_wallet import SolanaWallet
+
+            wallet = SolanaWallet(known_address=config.SOLANA_WALLET_ADDRESS)
+            balance = SolanaRPCConnector().get_usdc_balance_usd(wallet.address)
+        else:
+            from . import chain_ops
+            from .wallet import OperatingWallet
+
+            wallet = OperatingWallet(known_address=config.OPERATING_WALLET_ADDRESS)
+            w3 = chain_ops.get_web3(chain)
+            balance = chain_ops.get_stable_balance_usd(w3, chain, stable, wallet.address)
         return WalletBalanceResult(chain=chain.name, stable=stable.name, balanceUsd=balance, fetchedAt=time.time())
     except Exception as exc:  # noqa: BLE001 - deliberately broad, see docstring
         return WalletBalanceResult(chain=chain.name, stable=stable.name, balanceUsd=None, fetchedAt=time.time(), error=str(exc))

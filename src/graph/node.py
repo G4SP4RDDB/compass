@@ -79,20 +79,21 @@ class DepositNode(Node):
 
 class WalletDeficitNode(Node):
     """Argent dû à des retraits utilisateur (l'entreprise gère les fonds pour
-    compte de tiers, voir main), dans une stable donnée — PARTAGÉ entre
-    TOUTES les chains (aucune chain propriétaire, contrairement à WalletNode
-    qui reste pinné à une chain) : comblable depuis n'importe quel WalletNode
-    de cette stable, sur n'importe quelle chain (voir Graph._linkWalletPayouts) —
-    pour l'entreprise, payer sur BSC ou Arbitrum ne fait aucune différence.
-    Un seul par stable au niveau du Graph. balance toujours <= 0 (déficit),
-    jamais d'arête sortante -> pur puits, comme SourceNode. C'est l'exact
-    miroir du surplus (WalletNode.balance, lui jamais partagé entre chains
-    sans passer par un bridge et son coût) : déficit partagé, surplus non
-    partagé."""
+    compte de tiers, voir main), en USD — PARTAGÉ entre TOUTES les chains ET
+    TOUTES les stables (aucune chain ni stable propriétaire, contrairement à
+    WalletNode qui reste pinné aux deux) : comblable depuis n'importe quel
+    WalletNode, quels que soient sa chain et sa stable (voir
+    Graph._linkWalletPayouts) — pour l'entreprise, régler un retrait en USDC
+    ou en USDT, depuis BSC ou depuis Arbitrum, ne fait aucune différence.
+    UN SEUL par Graph (pas un par stable : le déficit lui-même est en USD,
+    pas dans une stable précise). balance toujours <= 0 (déficit), jamais
+    d'arête sortante -> pur puits, comme SourceNode. C'est l'exact miroir du
+    surplus (WalletNode.balance, lui jamais partagé entre chains OU entre
+    stables sans passer respectivement par un bridge ou un swap, chacun avec
+    son coût) : déficit partagé, surplus non partagé."""
 
-    def __init__(self, stable: Stable, nodeIndex: int, balance: float = 0.0):
+    def __init__(self, nodeIndex: int, balance: float = 0.0):
         super().__init__(NodeType.WalletDeficit, nodeIndex)
-        self.stable = stable
         self.balance = balance
 
 

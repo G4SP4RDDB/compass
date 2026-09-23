@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from connectors.cowswap import COWSWAP_VENUE_NAME
+from graph.structures.bridges import BridgeProtocol, availableBridgeProtocols
 from graph.structures.DEXes import Chain, Stable
 
 from . import comparator, config, executor, plan_loader, reporter
@@ -107,6 +108,29 @@ def resolve_bridge_hop(from_chain_name: str, stable_name: str, to_chain_name: st
     return fromChain, toChain, stable, planned
 
 
+def resolve_cctp_bridge_hop(from_chain_name: str, stable_name: str, to_chain_name: str):
+    """CCTP counterpart of resolve_bridge_hop — no DEX registry entry to
+    validate against (see compass_test/cctp_runner.py: there's no DEX on
+    either side of this bridge), so the check is directly against
+    graph.structures.bridges.availableBridgeProtocols offering CCTP for
+    this route, same source of truth plan_loader.build_bridge_hop_estimate
+    uses to pick the protocol. Returns (fromChain, toChain, stable,
+    PlannedHop) — no min deposit/withdraw floor to carry (unlike Aden's
+    bridge, CCTP has no DEX-side minimum; see run_single_hop's
+    config.DEFAULT_CCTP_TEST_USD fallback when no amount is given)."""
+    fromChain, stable = _parse_chain_stable(from_chain_name, stable_name)
+    toChain, _ = _parse_chain_stable(to_chain_name, stable_name)
+    if fromChain == toChain:
+        raise HopValidationError(f"a Bridge needs two different chains, got {fromChain.name} -> {toChain.name}")
+    if BridgeProtocol.CCTP not in availableBridgeProtocols(fromChain, toChain, stable):
+        raise HopValidationError(
+            f"CCTP does not support {stable.name} {fromChain.name}->{toChain.name} — this project only wires "
+            "ARBITRUM<->SOLANA USDC (see graph.structures.bridges._CCTP_CHAINS, compass_test/cctp_runner.py)"
+        )
+    planned = plan_loader.build_bridge_hop_estimate(fromChain, toChain, stable)
+    return fromChain, toChain, stable, planned
+
+
 def resolve_hop(dex_name: str, hop_type: HopType, chain_name: str, stable_name: str):
     """Validation + estimate only — no execution. Used by both
     run_single_hop below and by callers (e.g. the frontend, before it even
@@ -160,8 +184,10 @@ def run_single_hop(
     `to_stable_name` is the bought stable of a Swap hop (`stable_name` is
     the one sold); ignored otherwise. `to_chain_name` is the withdraw chain
     of a Bridge hop (`chain_name` is the deposit chain); ignored otherwise.
-    A Swap's `dex_name` is the venue, COWSWAP_VENUE_NAME; a Bridge's is
-    always "Aden" (the only protocol modeled) — anything else for either is
+    A Swap's `dex_name` is the venue, COWSWAP_VENUE_NAME. A Bridge's is
+    "Aden" or "CCTP", picked automatically from `chain_name`/`to_chain_name`/
+    `stable_name` via graph.structures.bridges.availableBridgeProtocols when
+    left blank — passing the OTHER protocol's name for a given route is
     rejected rather than silently routed.
 
     `on_stage`, passed straight through to executor.run_hop, is how a LIVE
@@ -179,21 +205,40 @@ def run_single_hop(
             usedConfiguredMinimum = True
         chain, stable, _stable_out, planned = resolve_swap_hop(chain_name, stable_name, to_stable_name, amount)
     elif hop_type == HopType.BRIDGE:
-        if dex_name not in ("Aden", ""):
-            raise HopValidationError(f"a Bridge hop runs through Aden, not {dex_name!r}")
-        dex_name = "Aden"
         if not to_chain_name:
             raise HopValidationError("a Bridge hop needs the withdraw chain (toChain), e.g. chain=ARBITRUM toChain=BSC")
-        chain, _to_chain, stable, planned = resolve_bridge_hop(chain_name, stable_name, to_chain_name)
-        if amount is None:
-            floor = max(planned.minDepositUsd, planned.minWithdrawUsd)
-            if floor <= 0:
-                raise HopValidationError(
-                    "No amount given and Aden's configured minimum deposit/withdraw is 0/unset. Set it in the "
-                    'Config tab ("Min deposit"/"Min withdraw") or pass an amount explicitly.'
-                )
-            amount = floor
-            usedConfiguredMinimum = True
+        # Protocol picked the same way plan_loader/the solver itself picks
+        # it (availableBridgeProtocols), BEFORE requiring a specific `dex`
+        # name — so a caller that leaves dex_name blank (the frontend/CLI
+        # default) gets routed automatically instead of always landing on
+        # Aden. The two protocols' chain sets never overlap today (Aden:
+        # BSC<->ARBITRUM, CCTP: ARBITRUM<->SOLANA), so this is never
+        # ambiguous in practice.
+        fromChainCheck, stableCheck = _parse_chain_stable(chain_name, stable_name)
+        toChainCheck, _ = _parse_chain_stable(to_chain_name, stable_name)
+        isCctpRoute = BridgeProtocol.CCTP in availableBridgeProtocols(fromChainCheck, toChainCheck, stableCheck)
+        if isCctpRoute:
+            if dex_name not in ("CCTP", ""):
+                raise HopValidationError(f"this Bridge route runs through CCTP, not {dex_name!r}")
+            dex_name = "CCTP"
+            chain, _to_chain, stable, planned = resolve_cctp_bridge_hop(chain_name, stable_name, to_chain_name)
+            if amount is None:
+                amount = config.DEFAULT_CCTP_TEST_USD
+                usedConfiguredMinimum = True
+        else:
+            if dex_name not in ("Aden", ""):
+                raise HopValidationError(f"a Bridge hop runs through Aden, not {dex_name!r}")
+            dex_name = "Aden"
+            chain, _to_chain, stable, planned = resolve_bridge_hop(chain_name, stable_name, to_chain_name)
+            if amount is None:
+                floor = max(planned.minDepositUsd, planned.minWithdrawUsd)
+                if floor <= 0:
+                    raise HopValidationError(
+                        "No amount given and Aden's configured minimum deposit/withdraw is 0/unset. Set it in the "
+                        'Config tab ("Min deposit"/"Min withdraw") or pass an amount explicitly.'
+                    )
+                amount = floor
+                usedConfiguredMinimum = True
     else:
         dex, chain, stable, planned = resolve_hop(dex_name, hop_type, chain_name, stable_name)
         if amount is None:
@@ -212,7 +257,10 @@ def run_single_hop(
     if live and confirm is not None and not confirm(planned, amount, wallet.address):
         raise HopAborted("live run declined at confirmation")
 
-    connector = None if hop_type == HopType.SWAP else get_connector(dex_name)
+    # Neither a Swap nor a CCTP bridge has a DexConnector — CCTP is
+    # wallet-to-wallet (see compass_test/cctp_runner.py), same reason a
+    # Swap has none (its venue is CoW Swap, not a DEX in the registry).
+    connector = None if hop_type == HopType.SWAP or dex_name == "CCTP" else get_connector(dex_name)
     executed = executor.run_hop(planned, connector, amount, wallet, live, on_stage=on_stage)
 
     hop_comparison = comparator.compare_hop(planned, executed)

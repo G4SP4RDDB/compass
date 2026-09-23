@@ -77,6 +77,13 @@ DEFAULT_SWAP_TEST_USD = float(os.getenv("COMPASS_TEST_SWAP_TEST_USD", "1"))
 # bp), tight enough that a real depeg can't be traded through.
 SWAP_SLIPPAGE_BPS = int(os.getenv("COMPASS_TEST_SWAP_SLIPPAGE_BPS", "50"))
 
+# --- CCTP bridge hop (Arbitrum->Solana, see connectors/cctp.py, cctp_runner.py) ---
+# Test amount when none is given: like a Swap, a CCTP bridge has no DEX-side
+# minimum to fall back on (see hop_runner.resolve_cctp_bridge_hop) — Circle
+# imposes no protocol minimum on a V1 depositForBurn either, so this is a
+# nominal small amount, not a floor discovered live like Aden's.
+DEFAULT_CCTP_TEST_USD = float(os.getenv("COMPASS_TEST_CCTP_TEST_USD", "1"))
+
 # Name of the env var (checked via the same load chain above) holding the
 # operating wallet's private key — the wallet that receives DEX withdrawals
 # and signs on-chain deposits (plain ERC-20 transfer or a DEX's deposit
@@ -92,6 +99,15 @@ OPERATING_WALLET_KEY_VAR = os.getenv("COMPASS_TEST_WALLET_KEY_VAR", "")
 # required for a live run — the address is always re-derived from the real
 # key at signing time there (see wallet.OperatingWallet.address).
 OPERATING_WALLET_ADDRESS = os.getenv("COMPASS_TEST_WALLET_ADDRESS")
+
+# Solana counterpart of the two vars above (see solana_wallet.SolanaWallet) —
+# ed25519 keypair, entirely separate key material from the EVM wallet.
+# Signs the Solana-side receiveMessage of the Arbitrum->Solana CCTP withdraw
+# pipeline (see connectors/cctp.py) and receives the minted USDC. Same
+# pointer-indirection convention as OPERATING_WALLET_KEY_VAR: this names the
+# env var holding the key, never the key itself.
+SOLANA_WALLET_KEY_VAR = os.getenv("COMPASS_TEST_SOLANA_WALLET_KEY_VAR", "")
+SOLANA_WALLET_ADDRESS = os.getenv("COMPASS_TEST_SOLANA_WALLET_ADDRESS")
 
 # --- Metrics dashboard (TimescaleDB, see ../docker-compose.yml) ---------
 # reporter.save_report() best-effort projects every report into this DB

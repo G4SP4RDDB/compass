@@ -53,7 +53,7 @@ def _nodeLabel(node: Node) -> str:
     if node.type == NodeType.Deposit:
         return f"{node.dex.name}\n{node.chain.name}/{node.stable.name}"
     if node.type == NodeType.WalletDeficit:
-        return f"Payouts due\n{node.stable.name}\nbal={node.balance:g}"
+        return f"Payouts due (USD)\nbal={node.balance:g}"
     return node.type.name
 
 

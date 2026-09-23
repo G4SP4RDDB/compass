@@ -2,3 +2,11 @@
 # provides requests/python-dotenv, reused here). Install into the same venv:
 #   .venv/bin/pip install -r compass_test/requirements.txt
 web3>=6.15.1,<7
+
+# Solana counterpart of web3/eth-account above — ed25519 keypair + tx
+# building/signing for the Solana leg of the CCTP withdraw pipeline (see
+# solana_wallet.py, connectors/cctp.py). Rust-backed bindings, no separate
+# solana-py dependency needed for what we use (keypair, message/tx, RPC
+# calls stay plain requests, same as connectors/solana_rpc.py).
+solders>=0.21,<1
+base58>=2.1,<3

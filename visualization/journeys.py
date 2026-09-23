@@ -5,7 +5,7 @@ from typing import cast
 
 from graph.edge import Edge
 from graph.graph import Graph
-from graph.node import Node, NodeType, SourceNode, WalletDeficitNode, WalletNode, WithdrawNode
+from graph.node import Node, NodeType, SourceNode, WalletNode, WithdrawNode
 
 _TERMINAL_NODE_TYPES = (NodeType.SourceNode, NodeType.WalletDeficit)
 
@@ -81,11 +81,16 @@ def decomposeJourneys(graph: Graph) -> list[Journey]:
     # Ce qui reste après avoir épuisé les retraits DEX ne peut venir que du
     # solde propre des wallets (voir WalletNode.balance et
     # solver._addFlowConservation) : un trajet par tranche, qui démarre
-    # directement au wallet. Un wallet à solde 0 n'a par construction plus
-    # de flot sortant non apparié ici (transit pur : tout ce qui sort y est
-    # entré via un trajet déjà extrait).
+    # directement au wallet. Balance > 0 requis : un wallet à solde 0 n'est
+    # JAMAIS une origine, seulement un point de transit (ex: WalletNode(ARBITRUM)
+    # relayant un bridge Aden entrant vers un bridge CCTP sortant, sans solde
+    # propre) -- s'il reste du flot non apparié là au moment d'y passer dans
+    # nodeList (l'ordre suit l'enum Chain, pas l'ordre topologique du flot :
+    # ARBITRUM précède BSC alors que le flot part de BSC), c'est forcément
+    # parce que l'origine réelle (une chain plus loin dans nodeList) n'a pas
+    # encore été traitée -- pas parce que CE wallet a lui-même produit ce flot.
     for node in graph.nodeList:
-        if node.type != NodeType.Wallet:
+        if node.type != NodeType.Wallet or cast(WalletNode, node).balance <= _FLOW_EPS:
             continue
         while any(remaining.get(i, 0.0) > _FLOW_EPS for i in outEdgesByNode.get(node.nodeIndex, [])):
             journey = _extractOneJourney(graph, node, remaining, outEdgesByNode, ambiguousNodes)
@@ -151,9 +156,10 @@ def _extractOneJourney(
         withdraw = cast(WithdrawNode, startNode)
         fromLabel, stable, fromWallet = withdraw.dex.name, withdraw.stable, False
     if current.type == NodeType.WalletDeficit:
-        # Trajet vers un déficit wallet (retrait utilisateur, voir
-        # graph.node.WalletDeficitNode), pas vers un DEX -- pas de .dex à lire.
-        toLabel = f"User payouts ({cast(WalletDeficitNode, current).stable.name})"
+        # Trajet vers le déficit wallet (retrait utilisateur, en USD, voir
+        # graph.node.WalletDeficitNode), pas vers un DEX -- pas de .dex à
+        # lire, et un seul par Graph donc pas de stable à distinguer non plus.
+        toLabel = "User payouts"
     else:
         toLabel = cast(SourceNode, current).dex.name
     return Journey(

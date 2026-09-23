@@ -114,6 +114,15 @@ def run_hop(
             planned.estimatedTimeSeconds,
         )
     if planned.hopType == HopType.BRIDGE:
+        # Protocol dispatch by `dex` — plan_loader.py's own _BRIDGE_DEX_NAME
+        # already maps graph.structures.bridges.BridgeProtocol to exactly
+        # these two strings when building the PlannedHop, so this mirrors
+        # that mapping rather than re-deriving the protocol from the chains
+        # here too. CCTP needs no DexConnector (there's no DEX on either
+        # side, see _run_cctp_bridge) — unlike Aden's bridge, which reuses
+        # _run_deposit/_run_withdraw through one.
+        if planned.dex == "CCTP":
+            return _run_cctp_bridge(chain, Chain[planned.toChain], stable, amount_usd, live, on_stage)
         return _run_bridge(
             connector,
             chain,
@@ -379,6 +388,84 @@ def _run_bridge(
         feeCostUsd=withdraw_result.feeCostUsd if bridge_ok else None,
         slippageCostUsd=0.0 if bridge_ok else None,
         notes=notes,
+    )
+
+
+def _run_cctp_bridge(
+    fromChain: Chain,
+    toChain: Chain,
+    stable: Stable,
+    amount_usd: float,
+    live: bool,
+    on_stage: Callable[[str, str, str], None] = _NOOP_STAGE,
+) -> ExecutedHop:
+    """CCTP counterpart of _run_bridge — no DexConnector on either side (the
+    "DEX" this hop reports as, "CCTP", is a protocol sentinel, not a real
+    registry entry, see plan_loader._BRIDGE_DEX_NAME), so unlike _run_bridge
+    this doesn't reuse _run_deposit/_run_withdraw: it hands off entirely to
+    compass_test.cctp_runner, which builds its OWN OperatingWallet/
+    SolanaWallet from config (see execute_arbitrum_to_solana_withdrawal's
+    docstring) rather than reusing the EVM `wallet` this function's caller
+    already has — a second, Solana-side wallet has no equivalent among
+    run_hop's own parameters, so threading it through would mean changing
+    run_hop's signature for every other hop type too. Scope guard below
+    mirrors hop_runner.resolve_bridge_hop's own Aden chain/stable check —
+    defense in depth, not the primary validation (that already happened
+    before this was ever reached, see plan_loader.build_bridge_hop_estimate
+    picking CCTP only when graph.structures.bridges.availableBridgeProtocols
+    offers it)."""
+    if fromChain != Chain.ARBITRUM or toChain != Chain.SOLANA or stable != Stable.USDC:
+        raise ValueError(
+            f"CCTP bridge only supports ARBITRUM->SOLANA USDC in this project, got "
+            f"{stable.name} {fromChain.name}->{toChain.name}"
+        )
+
+    from . import cctp_runner
+
+    startedAt = time.time()
+    try:
+        result = cctp_runner.execute_arbitrum_to_solana_withdrawal(amount_usd, live=live, on_stage=on_stage)
+    except Exception as exc:  # noqa: BLE001 - surfaced in the report, not swallowed (see _run_deposit's own try/except)
+        return ExecutedHop(
+            live=live,
+            startedAt=startedAt,
+            finishedAt=time.time(),
+            amountRequestedUsd=amount_usd,
+            actualCostUsd=None,
+            status="error",
+            notes=f"CCTP bridge failed: {exc}",
+        )
+    finishedAt = time.time()
+
+    if not live:
+        return ExecutedHop(
+            live=False,
+            startedAt=startedAt,
+            finishedAt=finishedAt,
+            amountRequestedUsd=amount_usd,
+            actualCostUsd=result.burnGasCostUsd,
+            status="dry_run",
+            gasCostUsd=result.burnGasCostUsd,
+            feeCostUsd=0.0,
+            slippageCostUsd=0.0,
+            notes=result.notes,
+        )
+
+    ok = result.receiveMessageSignature is not None
+    return ExecutedHop(
+        live=True,
+        startedAt=startedAt,
+        finishedAt=finishedAt,
+        amountRequestedUsd=amount_usd,
+        actualCostUsd=result.totalCostUsd if ok else None,
+        amountReceivedUsd=amount_usd if ok else None,  # CCTP V1 mints 1:1, no protocol fee (bridgeFeeUsd == 0.0)
+        txHash=result.burnTxHash,
+        externalId=result.receiveMessageSignature,
+        status="ok" if ok else "error",
+        gasCostUsd=result.burnGasCostUsd if ok else None,
+        feeCostUsd=result.receiveMessageGasCostUsd if ok else None,
+        slippageCostUsd=0.0 if ok else None,
+        notes=result.notes,
     )
 
 

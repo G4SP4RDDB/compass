@@ -9,12 +9,12 @@ from graph.structures.bridges import availableBridgeProtocols
 from graph.structures.DEXes import DEX, Chain, Stable
 from graph.structures.swap import SwapVenue
 
-# Toutes les DEX du registre ne vivent plus que sur BSC et/ou Arbitrum (voir
-# graph.structures.dex_registry._DEX_SPECS) : la seule route de bridging qui
-# reste utile est BSC<->Arbitrum, servie par le bridge interne d'Aden (voir
-# graph.structures.bridges.availableBridgeProtocols, qui ne renvoie plus que
-# ça). Réactivé maintenant que cette route a un vrai usage ; remettre à False
-# si le registre finit par tenir entièrement sur une seule chain.
+# Toutes les DEX du registre ne vivent que sur BSC et/ou Arbitrum (voir
+# graph.structures.dex_registry._DEX_SPECS), reliées par le bridge interne
+# d'Aden ; le withdraw pipeline ajoute une seconde route, Arbitrum<->Solana
+# via CCTP, pour régler un retrait dans le vault Solana (voir
+# graph.structures.bridges.availableBridgeProtocols). Remettre à False
+# désactiverait les deux.
 BRIDGES_ENABLED = True
 
 
@@ -25,23 +25,23 @@ class Graph:
         swapList: list[SwapVenue],
         gasFeeService: GasFeeService | None = None,
         walletBalances: dict[tuple[Chain, Stable], float] | None = None,
-        walletDeficits: dict[Stable, float] | None = None,
+        walletDeficitUsd: float = 0.0,
     ):
         """walletBalances : solde réel de l'operating wallet par (chain,
         stable), posé sur le WalletNode correspondant (voir WalletNode.balance)
         — une source bornée de plus pour le solveur, à côté des surplus DEX.
         Absent/vide -> tous les wallets à 0 (purs nœuds de transit).
-        walletDeficits : argent dû à des retraits utilisateur, par stable
-        (voir WalletDeficitNode) — négatif ou zéro, jamais positif (un
-        surplus wallet se pose via walletBalances, pas ici). Absent/vide ->
-        aucun déficit wallet (comportement inchangé)."""
+        walletDeficitUsd : argent dû à des retraits utilisateur, EN USD, tous
+        chains et stables confondus (voir WalletDeficitNode) — négatif ou
+        zéro, jamais positif (un surplus wallet se pose via walletBalances,
+        pas ici). 0.0 (défaut) -> aucun déficit wallet (comportement inchangé)."""
         self.nodeList: list[Node] = []
         self.edgeList: list[Edge] = []
         self.nodeIndex = 0
         self._gasFeeService = gasFeeService or GasFeeService()
         self._addSourceAndWithdrawNodes(dexList)
         self._addWalletNodes(walletBalances or {})
-        self._addWalletDeficitNodes(walletDeficits or {})
+        self._addWalletDeficitNodes(walletDeficitUsd)
         self._linkWithdrawalsAndDeposits(dexList)
         self._linkWalletPayouts()
         self._linkBridges()
@@ -88,15 +88,17 @@ class Graph:
                 self.nodeList.append(WalletNode(chain, stable, self.nodeIndex, balance=balance))
                 self.nodeIndex += 1
 
-    def _addWalletDeficitNodes(self, walletDeficits: dict[Stable, float]) -> None:
-        """Un WalletDeficitNode par stable — PARTAGÉ entre toutes les chains
-        (voir graph.node.WalletDeficitNode), pas un par (chain, stable) comme
-        WalletNode : le déficit dû à des retraits utilisateur est fongible
-        sur toute chain, câblé plus loin dans _linkWalletPayouts."""
-        for stable in Stable:
-            balance = min(walletDeficits.get(stable, 0.0), 0.0)
-            self.nodeList.append(WalletDeficitNode(stable, self.nodeIndex, balance=balance))
-            self.nodeIndex += 1
+    def _addWalletDeficitNodes(self, walletDeficitUsd: float) -> None:
+        """UN SEUL WalletDeficitNode pour tout le graphe, en USD — PARTAGÉ
+        entre toutes les chains ET toutes les stables (voir
+        graph.node.WalletDeficitNode), pas un par (chain, stable) comme
+        WalletNode ni même un par stable : le déficit dû à des retraits
+        utilisateur est fongible sur toute chain ET toute stable (payer un
+        retrait en USDC ou en USDT ne fait aucune différence pour
+        l'entreprise), câblé plus loin dans _linkWalletPayouts."""
+        balance = min(walletDeficitUsd, 0.0)
+        self.nodeList.append(WalletDeficitNode(self.nodeIndex, balance=balance))
+        self.nodeIndex += 1
 
     def _linkWithdrawalsAndDeposits(self, dexList: list[DEX]) -> None:
         """Câble WithdrawNode -> WalletNode (retrait) et WalletNode ->
@@ -156,25 +158,25 @@ class Graph:
                         self.edgeList.append(Edge(wallet, sourceNode))
 
     def _linkWalletPayouts(self) -> None:
-        """Câble WalletNode -> WalletDeficitNode, pour CHAQUE chain (pas
-        seulement celles d'un DEX donné, contrairement à
-        _linkWithdrawalsAndDeposits) : c'est précisément ce qui rend le
-        déficit wallet fongible sur toute chain (voir
-        graph.node.WalletDeficitNode). Un seul hop, comme le dépôt direct
-        DEX (WalletNode -> SourceNode) — payer un utilisateur est un simple
-        virement, pas de notion d'adresse de dépôt à deux étapes ici."""
-        walletDeficitByStable: dict[Stable, WalletDeficitNode] = {
-            cast(WalletDeficitNode, n).stable: cast(WalletDeficitNode, n)
+        """Câble l'UNIQUE WalletNode(SOLANA, USDC) -> l'UNIQUE WalletDeficitNode
+        du graphe : un retrait utilisateur n'est réglé qu'une fois l'USDC
+        effectivement arrivé dans le vault Solana (un simple virement/mint
+        dans le compte du vault, voir costing.computeCost, EdgeType==None,
+        NodeType.WalletDeficit -- pas de notion de dépôt en deux étapes). La
+        fongibilité entre chains ET entre stables (voir graph.node.WalletDeficitNode)
+        vient d'AVANT ce dernier hop : Aden bridge + swap + CCTP (voir
+        _linkBridges/_linkSwaps, qui composent déjà librement WalletNode ->
+        WalletNode), pas d'un raccourci direct depuis n'importe quel wallet
+        comme avant l'ajout du pipeline CCTP."""
+        walletDeficitNode = next(n for n in self.nodeList if n.type == NodeType.WalletDeficit)
+        settlementWallet = next(
+            n
             for n in self.nodeList
-            if n.type == NodeType.WalletDeficit
-        }
-        for n in self.nodeList:
-            if n.type != NodeType.Wallet:
-                continue
-            wallet = cast(WalletNode, n)
-            walletDeficit = walletDeficitByStable.get(wallet.stable)
-            if walletDeficit is not None:
-                self.edgeList.append(Edge(wallet, walletDeficit))
+            if n.type == NodeType.Wallet
+            and cast(WalletNode, n).chain == Chain.SOLANA
+            and cast(WalletNode, n).stable == Stable.USDC
+        )
+        self.edgeList.append(Edge(settlementWallet, walletDeficitNode))
 
     def _linkBridges(self) -> None:
         walletNodes = [cast(WalletNode, n) for n in self.nodeList if n.type == NodeType.Wallet]
@@ -183,9 +185,9 @@ class Graph:
         # convertit jamais : arête directe WalletNode -> WalletNode entre la
         # MÊME stable, sur des chains différentes (graphe complet par stable,
         # une arête dirigée par sens : A->B et B->A sont deux edges
-        # distinctes). Une edge PAR PROTOCOLE disponible sur cette route (un
-        # seul aujourd'hui : ADEN_INTERNAL, sur BSC<->ARBITRUM uniquement,
-        # voir availableBridgeProtocols) : autant d'options parallèles que le
+        # distinctes). Une edge PAR PROTOCOLE disponible sur cette route (voir
+        # availableBridgeProtocols : ADEN_INTERNAL sur BSC<->ARBITRUM, CCTP sur
+        # ARBITRUM<->SOLANA pour l'USDC) : autant d'options parallèles que le
         # solveur peut arbitrer par coût, voir costing.py. Pas de node Bridge
         # intermédiaire : l'opération se fait en un seul appel de contrat, du
         # wallet source au wallet destination — un node entrée/sortie séparé

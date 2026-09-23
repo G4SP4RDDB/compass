@@ -64,18 +64,19 @@ def _fetchLiveWalletBalances() -> dict[tuple[Chain, Stable], float | None]:
 
 def _checkCombinedFeasibility(
     imbalances: dict,
-    walletDeficits: dict,
+    walletDeficit: dict,
     walletBalances: dict[tuple[Chain, Stable], float],
 ) -> None:
     """Étend connectors.dex_imbalances.check_feasibility (DEX seul) au
-    déficit wallet (retraits utilisateur, connectors.wallet_deficits) : ce
-    déficit est comblable par n'importe quel surplus, DEX OU wallet (voir
-    graph.node.WalletDeficitNode) — l'ignorer ferait déclarer infaisable un
-    déficit wallet en réalité couvert par le solde déjà présent dans
-    l'operating wallet, le cas le plus courant. Même arrondi au centime que
-    graph.solver.SCALE, pour ne pas déclarer infaisable un écart de flottant."""
+    déficit wallet EN USD (retraits utilisateur, connectors.wallet_deficits) :
+    ce déficit est comblable par n'importe quel surplus, DEX OU wallet, dans
+    n'importe quelle stable (voir graph.node.WalletDeficitNode) — l'ignorer
+    ferait déclarer infaisable un déficit wallet en réalité couvert par le
+    solde déjà présent dans l'operating wallet, le cas le plus courant. Même
+    arrondi au centime que graph.solver.SCALE, pour ne pas déclarer
+    infaisable un écart de flottant."""
     dexSummary = summarize_dex_imbalances(imbalances)
-    totalDeficitUsd = dexSummary.totalDeficitUsd + total_wallet_deficit_usd(walletDeficits)
+    totalDeficitUsd = dexSummary.totalDeficitUsd + total_wallet_deficit_usd(walletDeficit)
     totalSurplusUsd = dexSummary.totalSurplusUsd + sum(walletBalances.values())
     if totalDeficitUsd and round(totalDeficitUsd * 100) > round(totalSurplusUsd * 100):
         raise InfeasibleImbalancesError(
@@ -144,7 +145,7 @@ def buildAndSolveGraph(
         swapList=[],
         gasFeeService=gasFeeService,
         walletBalances=walletBalances,
-        walletDeficits=apply_wallet_deficits(walletDeficitsRaw),
+        walletDeficitUsd=apply_wallet_deficits(walletDeficitsRaw),
     )
     graph.computeAllCapacities()
     graphSolve(graph, timeWeightParams, mode)  # peuple edge.flow sur graph.edgeList, lu par renderGraphHtml

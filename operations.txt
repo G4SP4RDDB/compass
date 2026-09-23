@@ -1,6 +1,6 @@
-4 operations — $190.41 moved — $0.2163 total fees — ~5m07s to complete (longest single hop)
+4 operations — $190.41 moved — $0.2168 total fees — ~5m07s to complete (longest single hop)
 
 [Deposit ] Wallet BSC/USDT -> MEXC    amount=$100.00  cost=$0.0026  delay=45s
 [Withdraw] Aden withdraw (USDT) -> Wallet BSC/USDT    amount=$88.41  cost=$0.2000  delay=37s
 [Deposit ] Wallet ARBITRUM/USDC -> Ondo Perps    amount=$1.00  cost=$0.0036  delay=307s
-[Swap    ] Wallet ARBITRUM/USDT -> Wallet ARBITRUM/USDC    amount=$1.00  cost=$0.0102  delay=18s
+[Swap    ] Wallet ARBITRUM/USDT -> Wallet ARBITRUM/USDC    amount=$1.00  cost=$0.0106  delay=18s

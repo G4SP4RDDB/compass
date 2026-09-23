@@ -190,17 +190,6 @@
   .wallet-row .wallet-value { font-weight: 600; font-variant-numeric: tabular-nums; }
   .wallet-row .wallet-value.wallet-na { color: var(--muted); font-weight: 400; font-style: italic; }
   .wallet-total { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); font-weight: 700; }
-  /* Réglages "solver source" d'un wallet (connectors.wallet_sources) :
-     par stable, le solveur peut-il puiser dans ce solde, et jusqu'à combien. */
-  .ws-form { display: grid; grid-template-columns: auto auto 1fr; gap: 6px 10px; align-items: center; font-size: 11.5px; margin: 6px 0 4px; }
-  .ws-form .ws-head { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .03em; }
-  .ws-form input[type="number"] {
-    width: 100%; box-sizing: border-box; padding: 4px 6px; border-radius: 4px;
-    border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 11.5px;
-  }
-  .ws-form input[type="number"]:disabled { opacity: .45; }
-  .ws-solved { color: var(--muted); font-size: 10.5px; }
-  .ws-solved b { color: var(--text); }
   #walletPanel .wallet-error { color: var(--neg); font-size: 11px; margin-top: 6px; }
 
   .status-note { font-size: 11px; font-style: italic; color: var(--muted); }
@@ -239,7 +228,6 @@
      DEX's own API (compass_test/balances.py) and never feeds the solver. */
   .dex-balance-real { font-weight: 600; }
   .dex-balance-na { color: var(--muted); font-style: italic; }
-  .mock-note { color: var(--muted); font-size: 10.5px; margin: -4px 0 10px; line-height: 1.4; }
 
   /* Formulaire "Imbalance" du panel Details : ce que l'utilisateur tape ici
      EST ce que le solveur verra au prochain "Run solver" (voir
@@ -839,20 +827,28 @@ const swapNode = GRAPH_DATA.swapNode
 const ringRadius = layoutNodes(swapNode ? [...GRAPH_DATA.dexNodes, swapNode] : GRAPH_DATA.dexNodes);
 document.getElementById("centerMark").setAttribute("font-size", Math.max(18, ringRadius * 0.09));
 
-// Deux nœuds "Wallet" FIXES (pas des données du solveur — structurels,
-// scope volontairement limité à USDC/USDT sur Arbitrum/BSC, comme le panel
-// "Wallet (on-chain, live)" du sidebar, voir fetchWalletBalances) : tout ce
-// qui passe par un Withdraw ou un Deposit choisi par le solveur transite
-// visuellement par l'un des deux (voir journeyWaypoints). Posés de part et
-// d'autre du centre géométrique pour laisser le watermark "COMPASS" visible
-// dans l'espace entre eux, à `{cx, cy, r}` — le même shape qu'un DEX
-// (voir dexNodes/layoutNodes) — pour que edgeGeometry() marche dessus sans
-// aucune modification.
+// Trois nœuds "Wallet" FIXES (pas des données du solveur — structurels) :
+// BSC/ARBITRUM, dont le solde ON-CHAIN LIVE est lu (scope volontairement
+// limité à USDC/USDT sur ces deux chains, comme le panel "Wallet (on-chain,
+// live)" du sidebar, voir fetchWalletBalances), et SOLANA, le vault de sortie
+// du withdraw pipeline CCTP (voir graph.structures.bridges/Graph.
+// _linkWalletPayouts côté Python) — pas encore de lecteur de solde live pour
+// celui-ci (voir renderWalletDetails), mais le même panel "Withdraw amount"
+// EXISTE déjà dessus (walletDeficitFormHtml est partagé entre toutes les
+// chains, voir son commentaire). Tout ce qui passe par un Withdraw ou un
+// Deposit choisi par le solveur transite visuellement par l'un des trois
+// (voir journeyWaypoints). BSC/ARBITRUM posés de part et d'autre du centre
+// géométrique pour laisser le watermark "COMPASS" visible dans l'espace
+// entre eux, SOLANA en dessous ; tous à `{cx, cy, r}` — le même shape qu'un
+// DEX (voir dexNodes/layoutNodes) — pour que edgeGeometry() marche dessus
+// sans aucune modification.
 const WALLET_HUB_OFFSET = 90, WALLET_HUB_R = 26;
 const walletHubs = [
   { name: "BSC", chain: "BSC", cx: -WALLET_HUB_OFFSET, cy: 0, r: WALLET_HUB_R },
   { name: "ARBITRUM", chain: "ARBITRUM", cx: WALLET_HUB_OFFSET, cy: 0, r: WALLET_HUB_R },
+  { name: "SOLANA", chain: "SOLANA", cx: 0, cy: WALLET_HUB_OFFSET + 10, r: WALLET_HUB_R },
 ];
+const WALLET_HUB_ICON = { ARBITRUM: "ARB", BSC: "BSC", SOLANA: "SOL" };
 const walletHubByChain = new Map(walletHubs.map(w => [w.chain, w]));
 
 // Décompose une pathEdge (DEX -> DEX) en points de passage réels
@@ -1360,8 +1356,9 @@ function addRecheckBalanceButton(resultEl, dexName) {
     try {
       const res = await fetch(`/api/dex-balances/${encodeURIComponent(dexName)}`);
       const data = await res.json();
+      const stables = dexByName.get(dexName)?.stables || ["USDT", "USDC"];
       out.textContent = data.balances
-        ? `${dexName} balance right now — USDT: $${fmt(data.balances.USDT || 0)}, USDC: $${fmt(data.balances.USDC || 0)}`
+        ? `${dexName} balance right now — ${stables.map(s => `${s}: $${fmt(data.balances[s] || 0)}`).join(", ")}`
         : `Couldn't read ${dexName}'s balance (${data.error || "unavailable"}).`;
     } catch (e) {
       out.textContent = `Couldn't read ${dexName}'s balance (${e.message}).`;
@@ -2111,8 +2108,10 @@ function swapNodeTooltipHtml(swap) {
 // <rect> arrondi plutôt qu'un <circle> : jamais confondu avec un DEX au
 // premier coup d'œil, et sans anneau de solde (pas de concept de
 // surplus/déficit pour un wallet). Cliquer dessus affiche le solde ON-CHAIN
-// RÉEL de cette chain (voir selectWallet) — même donnée live que le panel
-// "Wallet (on-chain, live)" du sidebar, GET /api/wallet-balances.
+// RÉEL de cette chain quand il y en a un lecteur live (BSC/ARBITRUM, voir
+// selectWallet — même donnée live que le panel "Wallet (on-chain, live)" du
+// sidebar, GET /api/wallet-balances) et, pour toutes les chains y compris
+// SOLANA, le panel "Withdraw amount" (voir walletDeficitFormHtml).
 const walletHubElements = new Map();
 for (const hub of walletHubs) {
   const g = document.createElementNS(SVG_NS, "g");
@@ -2131,7 +2130,7 @@ for (const hub of walletHubs) {
   const icon = document.createElementNS(SVG_NS, "text");
   icon.setAttribute("class", "wallet-icon");
   icon.setAttribute("y", 5);
-  icon.textContent = hub.chain === "ARBITRUM" ? "ARB" : "BSC";
+  icon.textContent = WALLET_HUB_ICON[hub.chain] || hub.chain.slice(0, 3);
   g.appendChild(icon);
 
   const label = document.createElementNS(SVG_NS, "text");
@@ -2145,7 +2144,7 @@ for (const hub of walletHubs) {
 
   g.addEventListener("click", (ev) => { ev.stopPropagation(); selectWallet(hub.chain); });
   g.addEventListener("mouseenter", (ev) => showTooltip(ev,
-    `<div><b>Wallet · ${hub.chain}</b></div><div>Click for the real on-chain USDC/USDT balance</div>`));
+    `<div><b>Wallet · ${hub.chain}</b></div><div>Click for the wallet balance and withdrawal amount</div>`));
   g.addEventListener("mousemove", positionTooltip);
   g.addEventListener("mouseleave", hideTooltip);
 }
@@ -2233,25 +2232,23 @@ function imbalanceFormHtml(dex) {
   }
   const cur = imbalances[dex.name] || {};
   const kind = cur.kind || "";
-  const amount = cur.amountUsd !== undefined ? cur.amountUsd : "";
+  const signedAmount = kind === "deficit" ? -cur.amountUsd : kind === "surplus" ? cur.amountUsd : "";
+  const hasStableChoice = dex.stables.length > 1;
   const stableOpts = dex.stables.map(s => `<option value="${s}" ${cur.stable === s ? "selected" : ""}>${s}</option>`).join("");
-  const chainOpts = [`<option value="">any chain</option>`]
+  const hasChainChoice = dex.chains.length > 1;
+  const chainOpts = (hasChainChoice ? [`<option value="">any chain</option>`] : [])
     .concat(dex.chains.map(c => `<option value="${c}" ${cur.chain === c ? "selected" : ""}>${c}</option>`)).join("");
   const isSurplus = kind === "surplus";
   return `
     <div class="imb-form" data-dex="${dex.name}">
-      <label>Kind</label>
-      <select class="imb-kind">
-        <option value="" ${kind === "" ? "selected" : ""}>balanced (no flow)</option>
-        <option value="surplus" ${kind === "surplus" ? "selected" : ""}>surplus — can send</option>
-        <option value="deficit" ${kind === "deficit" ? "selected" : ""}>deficit — must receive</option>
-      </select>
       <label>Amount (USD)</label>
-      <input type="number" class="imb-amount" min="0" step="0.01" value="${amount}" ${kind === "" ? "disabled" : ""}>
+      <input type="number" class="imb-amount" step="0.01" value="${signedAmount}" placeholder="0 = balanced, + = surplus, − = deficit">
+      ${hasStableChoice ? `
       <label class="imb-surplus-only" ${isSurplus ? "" : "hidden"}>Stable</label>
-      <select class="imb-stable imb-surplus-only" ${isSurplus ? "" : "hidden"}>${stableOpts}</select>
+      <select class="imb-stable imb-surplus-only" ${isSurplus ? "" : "hidden"}>${stableOpts}</select>` : ""}
+      ${hasChainChoice ? `
       <label class="imb-surplus-only" ${isSurplus ? "" : "hidden"}>Chain${dex.requiresSameChainWithdraw ? " (required)" : ""}</label>
-      <select class="imb-chain imb-surplus-only" ${isSurplus ? "" : "hidden"}>${chainOpts}</select>
+      <select class="imb-chain imb-surplus-only" ${isSurplus ? "" : "hidden"}>${chainOpts}</select>` : ""}
     </div>
     <div class="imb-actions">
       <button class="imb-save-btn" type="button">Save imbalance</button>
@@ -2262,35 +2259,38 @@ function imbalanceFormHtml(dex) {
 function bindImbalanceForm(dex) {
   const form = document.querySelector(`.imb-form[data-dex="${CSS.escape(dex.name)}"]`);
   if (!form) return;
-  const kindEl = form.querySelector(".imb-kind");
   const amountEl = form.querySelector(".imb-amount");
   const saveBtn = form.parentElement.querySelector(".imb-save-btn");
   const statusEl = form.parentElement.querySelector(".imb-status");
 
   const syncVisibility = () => {
-    const kind = kindEl.value;
-    amountEl.disabled = kind === "";
-    form.querySelectorAll(".imb-surplus-only").forEach(el => { el.hidden = kind !== "surplus"; });
-    if (dex.requiresSameChainWithdraw && kind === "surplus" && !form.querySelector(".imb-chain").value) {
-      form.querySelector(".imb-chain").value = dex.chains[0];
+    const isSurplus = parseFloat(amountEl.value) > 0;
+    form.querySelectorAll(".imb-surplus-only").forEach(el => { el.hidden = !isSurplus; });
+    const chainEl = form.querySelector(".imb-chain");
+    if (dex.requiresSameChainWithdraw && isSurplus && chainEl && !chainEl.value) {
+      chainEl.value = dex.chains[0];
     }
   };
-  kindEl.addEventListener("change", syncVisibility);
+  amountEl.addEventListener("input", syncVisibility);
   syncVisibility();
 
   saveBtn.addEventListener("click", async () => {
-    const kind = kindEl.value;
-    const entry = kind === "" ? null : {
-      kind,
-      amountUsd: parseFloat(amountEl.value),
-      stable: form.querySelector(".imb-stable").value,
-      chain: form.querySelector(".imb-chain").value || null,
-    };
-    if (entry && !(entry.amountUsd > 0)) {
-      statusEl.textContent = "amount must be > 0";
+    const raw = amountEl.value.trim();
+    const value = raw === "" ? 0 : parseFloat(raw);
+    if (Number.isNaN(value)) {
+      statusEl.textContent = "enter a valid number";
       statusEl.className = "imb-status error";
       return;
     }
+    const kind = value === 0 ? "" : value > 0 ? "surplus" : "deficit";
+    const stableEl = form.querySelector(".imb-stable");
+    const chainEl = form.querySelector(".imb-chain");
+    const entry = kind === "" ? null : {
+      kind,
+      amountUsd: Math.abs(value),
+      stable: stableEl ? stableEl.value : dex.stables[0],
+      chain: chainEl ? (chainEl.value || null) : dex.chains[0],
+    };
     const next = { ...imbalances, [dex.name]: entry };
     saveBtn.disabled = true;
     statusEl.textContent = "Saving…";
@@ -2353,16 +2353,10 @@ function renderDexDetails(dex) {
     </dl>
     <h2>Imbalance</h2>
     ${imbalanceFormHtml(dex)}
-    <p class="mock-note">Surplus = at most this much can be withdrawn from ${dex.name};
-      deficit = exactly this much must be deposited into it. Saved to
-      connectors/dex_imbalances.json — press "Run solver" in the toolbar once
-      every DEX is set. "Solved with" is what the current plan was built on.
-      "Real balance" is a live read of ${dex.name}'s account, shown so you
-      don't declare more surplus than it holds; it never feeds the solver by itself.</p>
     <h2>Paths to other DEXes</h2>
     ${rows}`;
 
-  loadDexRealBalance(dex.name);
+  loadDexRealBalance(dex.name, dex.stables);
   bindImbalanceForm(dex);
 
   document.querySelectorAll(".path-head").forEach(head => {
@@ -2389,7 +2383,7 @@ function renderDexDetails(dex) {
 // dropped rather than overwriting the now-wrong panel. `data.balances` is
 // `{USDT, USDC}` — most DEXes only ever hold one of the two (see each
 // reader's docstring in balances.py), the other comes back as 0.
-async function loadDexRealBalance(dexName) {
+async function loadDexRealBalance(dexName, stables) {
   let data;
   try {
     const res = await fetch(`/api/dex-balances/${encodeURIComponent(dexName)}`);
@@ -2403,7 +2397,7 @@ async function loadDexRealBalance(dexName) {
   if (data.balances === null || data.balances === undefined) {
     el.innerHTML = `<div class="chip-row"><span class="chip dex-balance-na" title="${data.error || "unavailable"}">n/a</span></div>`;
   } else {
-    const chips = ["USDT", "USDC"].map(s =>
+    const chips = (stables && stables.length ? stables : ["USDT", "USDC"]).map(s =>
       `<span class="chip dex-balance-real">${s}: $${fmt(data.balances[s] || 0)}</span>`
     ).join("");
     el.innerHTML = `<div class="chip-row">${chips}</div>`;
@@ -2498,13 +2492,12 @@ async function renderWalletDetails(chain) {
     return;
   }
 
-  const total = rows.reduce((s, r) => s + (r.balanceUsd || 0), 0);
-  const rowsHtml = rows.map(r => {
+  const rowsHtml = rows.length ? rows.map(r => {
     const value = r.balanceUsd === null
       ? `<span class="wallet-value wallet-na" title="${r.error || "unavailable"}">n/a</span>`
       : `<span class="wallet-value">$${fmt(r.balanceUsd)}</span>`;
     return `<div class="wallet-row"><span class="wallet-label">${r.stable}</span>${value}</div>`;
-  }).join("");
+  }).join("") : `<p class="results-empty">No live balance reader configured for ${chain} yet — set the withdraw amount below instead.</p>`;
 
   const walletJourneys = GRAPH_DATA.journeys.filter(j => j.fromWallet && j.from === `Wallet ${chain}/${j.stable}`);
   const journeyBlocks = walletJourneys.map(j => {
@@ -2523,105 +2516,88 @@ async function renderWalletDetails(chain) {
     <h2>Details</h2>
     <dl>
       <dt>Wallet</dt><dd>${chain}</dd>
-      <dt>Scope</dt><dd>USDC, USDT — real on-chain balance, live</dd>
+      <dt>Scope</dt><dd>${rows.length ? "USDC, USDT — real on-chain balance, live" : "no live balance reader for this chain yet"}</dd>
     </dl>
     <h2>Balance</h2>
     ${rowsHtml}
-    <div class="wallet-total"><span>Total</span><span>$${fmt(total)}</span></div>
-    <h2>Solver source</h2>
-    ${walletSourcesFormHtml(chain, rows)}
+    <h2>Withdraw amount</h2>
+    ${walletDeficitFormHtml()}
     ${walletJourneys.length ? `<h2>Chosen by the solver from this wallet</h2>${journeyBlocks}` : ""}`;
 
-  bindWalletSourcesForm(chain);
+  bindWalletDeficitForm();
   bindTestEdgeButtons();
   bindExecuteButtons();
 }
 
-// Réglages connectors/wallet_sources.json (GET/POST /api/wallet-sources),
-// une ligne par stable de ce wallet : "use" (le solveur peut puiser ici) et
-// un plafond optionnel. GRAPH_DATA.walletNodes donne ce que le graphe
-// COURANT a effectivement offert au solveur (voir WalletNode.balance).
-let walletSources = null;
-async function getWalletSources() {
-  if (walletSources) return walletSources;
+// Argent dû à un retrait utilisateur, par stable (connectors.wallet_deficits,
+// GET/POST /api/wallet-deficits, voir graph.node.WalletDeficitNode) -- saisi
+// à la main EXACTEMENT comme l'Imbalance d'un DEX (imbalanceFormHtml ci-
+// dessus), mais EN USD et PARTAGÉ entre TOUTES les chains ET TOUTES les
+// stables (pas de "surplus" possible ici, ni de chain/stable à choisir --
+// régler un retrait en USDC ou en USDT ne fait aucune différence) : ce bloc
+// s'affiche donc IDENTIQUEMENT dans le panel Details de chaque chain de
+// wallet, et l'éditer depuis n'importe laquelle change la même donnée sur
+// disque. UN SEUL montant pour tout le wallet, pas un par stable.
+let walletDeficit = {};
+let walletDeficitsServerAvailable = true;
+
+async function initWalletDeficits() {
   try {
-    const res = await fetch("/api/wallet-sources");
-    walletSources = res.ok ? await res.json() : {};
+    const res = await fetch("/api/wallet-deficits");
+    if (!res.ok) throw new Error("bad response");
+    const data = await res.json();
+    walletDeficit = data.walletDeficit || {};
   } catch (e) {
-    walletSources = {};
+    walletDeficitsServerAvailable = false;
   }
-  return walletSources;
+  if (selectedWalletChain) renderWalletDetails(selectedWalletChain);
 }
 
-function solvedWalletBalance(chain, stable) {
-  const n = (GRAPH_DATA.walletNodes || []).find(w => w.chain === chain && w.stable === stable);
-  return n ? n.balance : 0;
-}
-
-function walletSourcesFormHtml(chain, rows) {
-  const stables = rows.map(r => r.stable);
-  const cells = stables.map(stable => {
-    const key = `${chain}/${stable}`;
-    const cur = (walletSources || {})[key] || {};
-    const enabled = cur.enabled !== false;
-    const override = cur.overrideUsd === null || cur.overrideUsd === undefined ? "" : cur.overrideUsd;
-    return `
-      <label><input type="checkbox" class="ws-enabled" data-key="${key}" ${enabled ? "checked" : ""}> ${stable}</label>
-      <span class="ws-solved">solved with <b>$${fmt(solvedWalletBalance(chain, stable))}</b></span>
-      <input type="number" class="ws-override" data-key="${key}" min="0" step="0.01" placeholder="cap (blank = live balance)" value="${override}" ${enabled ? "" : "disabled"}>`;
-  }).join("");
+function walletDeficitFormHtml() {
+  if (!walletDeficitsServerAvailable) {
+    return `<div class="imb-status error">Not connected to the server — payouts can't be edited here. Serve this page with \`python -m visualization.server\`.</div>`;
+  }
+  const amount = walletDeficit.amountUsd !== undefined ? walletDeficit.amountUsd : "";
   return `
-    <div class="ws-form" data-chain="${chain}">
-      <span class="ws-head">use</span><span class="ws-head">in current plan</span><span class="ws-head">cap (USD)</span>
-      ${cells}
-    </div>
-    <div class="imb-actions">
-      <button class="imb-save-btn ws-save-btn" type="button">Save wallet settings</button>
-      <span class="imb-status ws-status"></span>
+    <div class="wallet-deficit-form-block">
+      <div class="imb-form">
+        <label>Amount (USD)</label>
+        <input type="number" class="imb-amount" min="0" step="0.01" value="${amount}">
+      </div>
+      <div class="imb-actions">
+        <button class="imb-save-btn" type="button">Save</button>
+        <span class="imb-status"></span>
+      </div>
     </div>`;
 }
 
-async function bindWalletSourcesForm(chain) {
-  await getWalletSources();
-  const form = document.querySelector(`.ws-form[data-chain="${CSS.escape(chain)}"]`);
-  if (!form) return;
-  // Re-render the cells now that the settings are known (first paint may
-  // have happened before the fetch resolved).
-  const stables = [...form.querySelectorAll(".ws-enabled")].map(el => el.dataset.key.split("/")[1]);
-  form.outerHTML = walletSourcesFormHtml(chain, stables.map(stable => ({ stable }))).split('<div class="imb-actions">')[0];
-  const form2 = document.querySelector(`.ws-form[data-chain="${CSS.escape(chain)}"]`);
-  const saveBtn = document.querySelector(".ws-save-btn");
-  const statusEl = document.querySelector(".ws-status");
-  if (!form2 || !saveBtn) return;
-
-  form2.querySelectorAll(".ws-enabled").forEach(cb => {
-    cb.addEventListener("change", () => {
-      form2.querySelector(`.ws-override[data-key="${CSS.escape(cb.dataset.key)}"]`).disabled = !cb.checked;
-    });
-  });
+function bindWalletDeficitForm() {
+  const block = document.querySelector(".wallet-deficit-form-block");
+  if (!block) return;
+  const amountEl = block.querySelector(".imb-amount");
+  const saveBtn = block.querySelector(".imb-save-btn");
+  const statusEl = block.querySelector(".imb-status");
+  if (!amountEl || !saveBtn) return;
 
   saveBtn.addEventListener("click", async () => {
-    const next = { ...(walletSources || {}) };
-    form2.querySelectorAll(".ws-enabled").forEach(cb => {
-      const raw = form2.querySelector(`.ws-override[data-key="${CSS.escape(cb.dataset.key)}"]`).value;
-      const override = raw === "" ? null : parseFloat(raw);
-      next[cb.dataset.key] = { enabled: cb.checked, overrideUsd: Number.isFinite(override) ? override : null };
-    });
+    const amountUsd = parseFloat(amountEl.value);
+    // Any amount > 0 is a deficit; 0, blank, or invalid clears it.
+    const entry = amountUsd > 0 ? { kind: "deficit", amountUsd } : null;
     saveBtn.disabled = true;
     statusEl.textContent = "Saving…";
-    statusEl.className = "imb-status ws-status";
+    statusEl.className = "imb-status";
     try {
-      const res = await fetch("/api/wallet-sources", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next),
+      const res = await fetch("/api/wallet-deficits", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `save failed (${res.status})`);
-      walletSources = data;
-      statusEl.textContent = "Saved. Press Run solver to re-plan.";
-      statusEl.className = "imb-status ws-status ok";
+      walletDeficit = data.walletDeficit;
+      statusEl.textContent = entry ? `Saved — $${entry.amountUsd.toFixed(2)}. Press Run solver to re-plan.` : "Saved — 0. Press Run solver to re-plan.";
+      statusEl.className = "imb-status ok";
     } catch (e) {
       statusEl.textContent = e.message;
-      statusEl.className = "imb-status ws-status error";
+      statusEl.className = "imb-status error";
     } finally {
       saveBtn.disabled = false;
     }
@@ -2712,6 +2688,7 @@ recomputeBtn.addEventListener("click", async () => {
   }
 });
 initImbalances();
+initWalletDeficits();
 
 // Cheapest/Fastest toggle: all-or-nothing route priority (see
 // graph.solver.RouteMode) — re-solves the graph already in memory (POST
