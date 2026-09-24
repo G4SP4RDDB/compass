@@ -58,7 +58,15 @@
     display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap;
     background: var(--panel-bg);
   }
-  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header h1.brand-logo { margin: 0; line-height: 0; }
+  /* Dagmar Capital wordmark, inlined (see index.template.html) rather than
+     linked as an external file — graph_template.html has to stay a single
+     self-contained page, no external asset requests (see build.mjs's
+     header comment). No hardcoded fill on the paths: `currentColor` picks
+     up `--text`, the same variable the rest of the header already uses, so
+     the logo follows light/dark mode automatically instead of needing its
+     own separate light/dark asset swap. */
+  header h1.brand-logo svg { height: 20px; width: auto; display: block; fill: currentColor; }
   #stats { font-size: 12px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
   #stats b { color: var(--text); }
 
