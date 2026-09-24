@@ -1,0 +1,14 @@
+{
+  "name": "compass-graph-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "description": "TypeScript source for visualization/web/graph_template.html — compiled with tsc (preserves comments; esbuild does not, see build.mjs), output inlined back into that same file. Not a standalone package.",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
