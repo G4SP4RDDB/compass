@@ -550,9 +550,20 @@
   .op-row .op-type { min-width: 108px; }
   .op-row .op-route { flex: 1; }
   .op-row .op-route b { font-weight: 600; }
+  .op-row .op-stable { color: var(--muted); min-width: 90px; }
   .op-row .op-amount { font-weight: 600; min-width: 90px; text-align: right; }
   .op-row .op-cost { color: var(--muted); min-width: 80px; text-align: right; }
   .op-row .op-delay { color: var(--muted); min-width: 60px; text-align: right; }
+  /* Column labels above the list (panels/operations.ts) — plain text, not
+     interactive, so someone unfamiliar with the interface doesn't have to
+     infer what each bare number/column means from position alone. */
+  .op-row.op-row-header {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+    color: var(--muted); border-bottom: 1px solid var(--text); padding-top: 0; padding-bottom: 6px;
+  }
+  .op-row.op-row-header .op-amount,
+  .op-row.op-row-header .op-cost,
+  .op-row.op-row-header .op-delay { font-weight: 700; }
   .ops-empty { color: var(--muted); padding: 40px 0; text-align: center; max-width: 420px; margin: 0 auto; }
 
   #configView { flex: 1; display: none; overflow-y: auto; padding: 18px 24px; }
@@ -642,7 +653,7 @@
     <button class="tab-btn" id="tabConfig">Config</button>
     <button class="tab-btn" id="tabTestResults">Test Results</button>
   </div>
-  <a href="/metrics" style="font-size:12px; color:var(--accent); text-decoration:none;">Metrics →</a>
+  <a href="/metrics" style="font-size:12px; color:var(--accent); text-decoration:none;">Rebalancings Tracker →</a>
   <div id="stats"></div>
 </header>
 
@@ -3339,6 +3350,22 @@ function renderStats() {
 }
 
 // panels/operations.ts
+// Column header row — same op-type/op-route/op-stable/op-amount/op-cost/
+// op-delay span classes as the data rows below it, so the flex column
+// widths line up automatically. Only shown when there's a list to label
+// (skipped in the empty-state branch below) — someone unfamiliar with the
+// interface otherwise has to infer what each bare number in a row means
+// from column position alone.
+const OPS_HEADER_HTML = `
+  <div class="op-row op-row-header">
+    <span class="op-type">Type</span>
+    <span class="op-route">Route</span>
+    <span class="op-stable">Stablecoin</span>
+    <span class="op-amount">Amount</span>
+    <span class="op-cost">Cost</span>
+    <span class="op-delay">Est. Time</span>
+    <span class="op-exec"></span>
+  </div>`;
 function renderOperations() {
     const ops = GRAPH_DATA.operations;
     const opsSummary = document.getElementById("opsSummary");
@@ -3353,16 +3380,18 @@ function renderOperations() {
     <div>Total moved<b>$${fmt(opsSummaryData.totalAmount)}</b></div>
     <div>Total fees<b>$${fmt(opsSummaryData.totalCost)}</b></div>
     <div title="Longest single hop among the chosen operations, not the sum along a chain">Est. total time<b>${fmtDuration(opsSummaryData.totalTime)}</b></div>`;
-    opsList.innerHTML = ops.map(o => `
+    const rows = ops.map(o => `
     <div class="op-row type-${typeSlug(o.type)}">
       <span class="op-type">${typeTag(o.type)}</span>
       <span class="op-route"><b>${o.from}</b> → ${o.to}${o.protocol ? ` <span class="hop-protocol">via ${o.protocol}</span>` : ""}</span>
+      <span class="op-stable">${o.testable ? hopStablesLabel(o.testable) : "–"}</span>
       <span class="op-amount">${fmt(o.amount)}</span>
       <span class="op-cost">${fmt(o.cost)}</span>
       <span class="op-delay">${o.time ? o.time.toFixed(0) + "s" : "–"}</span>
       <span class="op-exec">${o.testable ? executeButtonHtml(o.testable, o.amount, o.from, o.to) : ""}</span>
       ${o.testable ? `<div class="op-exec-result"><div class="hop-test-result"></div></div>` : ""}
     </div>`).join("");
+    opsList.innerHTML = OPS_HEADER_HTML + rows;
     bindExecuteButtons();
 }
 
