@@ -103,8 +103,15 @@ for (const j of GRAPH_DATA.journeys) {
 }
 
 export interface WalletJourneyEdge {
-  fromChain: string;
-  toChain: string;
+  // Every wallet hub chain the journey actually passes through, in order
+  // (one entry per Bridge hop's destination, deduped against repeats) --
+  // NOT just a single "fromChain"/intermediate "toChain" pair, since a
+  // journey can hop TWO bridges before reaching its destination (e.g.
+  // BSC -> Aden bridge -> ARBITRUM -> CCTP bridge -> SOLANA, see the
+  // payout pipeline in graph.structures.bridges/Graph._linkWalletPayouts) :
+  // collapsing that to first/last chain alone would draw a single straight
+  // segment and silently skip the intermediate bridge leg.
+  hubChains: string[];
   to: string;
   journeys: Journey[];
 }
@@ -113,17 +120,25 @@ export interface WalletJourneyEdge {
 // voir WalletNode.balance côté Python) : pas d'arête DEX -> DEX à laquelle
 // les rattacher (journeysByPair ne matche que des paires de DEX), donc sans
 // ce passage le graphe resterait vide alors que le header annonce des
-// opérations choisies. Un segment "chosen" par (hub de départ, DEX
-// d'arrivée) -- via le second hub si le trajet bridge -- avec les mêmes
-// badges animés ; le clic ouvre le panel du wallet, où le trajet et son
-// bouton Execute sont listés (voir renderWalletDetails).
+// opérations choisies. Un segment "chosen" par hub, un par chain traversée
+// -- via autant de hubs intermédiaires que de bridges empruntés -- avec les
+// mêmes badges animés ; le clic ouvre le panel du wallet, où le trajet et
+// son bouton Execute sont listés (voir renderWalletDetails). `to` peut être
+// un DEX OU "User payouts" (voir web_view.py::_nodeLabel) -- un trajet
+// WalletDeficit n'a pas de DEX de destination, GraphRenderer.
+// drawWalletJourneyEdges gère ce cas en s'arrêtant au dernier hub plutôt
+// qu'en cherchant un node DEX inexistant.
 export const walletJourneyEdges = new Map<string, WalletJourneyEdge>();
 for (const j of GRAPH_DATA.journeys) {
   if (!j.fromWallet) continue;
   const fromChain = j.from.replace(/^Wallet /, "").split("/")[0]!;
-  const depositHop = [...j.hops].reverse().find(h => h.testable && h.testable.hopType === "Deposit");
-  const toChain = depositHop ? depositHop.testable!.chain : fromChain;
-  const key = `${fromChain}→${toChain}→${j.to}`;
-  if (!walletJourneyEdges.has(key)) walletJourneyEdges.set(key, { fromChain, toChain, to: j.to, journeys: [] });
+  const hubChains = [fromChain];
+  for (const h of j.hops) {
+    if (h.testable && h.testable.hopType === "Bridge" && h.testable.toChain && h.testable.toChain !== hubChains[hubChains.length - 1]) {
+      hubChains.push(h.testable.toChain);
+    }
+  }
+  const key = `${hubChains.join("→")}→${j.to}`;
+  if (!walletJourneyEdges.has(key)) walletJourneyEdges.set(key, { hubChains, to: j.to, journeys: [] });
   walletJourneyEdges.get(key)!.journeys.push(j);
 }

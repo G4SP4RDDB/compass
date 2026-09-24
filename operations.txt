@@ -1,6 +1,6 @@
-4 operations — $27.61 moved — $0.5256 total fees — ~16m00s to complete (longest single hop)
+4 operations — $27.61 moved — $0.5255 total fees — ~16m00s to complete (longest single hop)
 
 [Payout] Wallet SOLANA/USDC -> User payouts    amount=$9.00  cost=$0.0006  delay=11s
-[Bridge] Wallet ARBITRUM/USDC -> Wallet SOLANA/USDC    amount=$9.00  cost=$0.0081  delay=960s  via CCTP (Circle)
-[Swap  ] Wallet ARBITRUM/USDT -> Wallet ARBITRUM/USDC    amount=$5.01  cost=$0.0112  delay=18s
-[Bridge] Wallet BSC/USDT -> Wallet ARBITRUM/USDT    amount=$4.61  cost=$0.5059  delay=300s  via Aden internal bridge
+[Bridge] Wallet ARBITRUM/USDC -> Wallet SOLANA/USDC    amount=$9.00  cost=$0.0080  delay=960s  via CCTP (Circle)
+[Swap  ] Wallet ARBITRUM/USDT -> Wallet ARBITRUM/USDC    amount=$5.01  cost=$0.0111  delay=18s
+[Bridge] Wallet BSC/USDT -> Wallet ARBITRUM/USDT    amount=$4.61  cost=$0.5058  delay=300s  via Aden internal bridge

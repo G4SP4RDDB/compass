@@ -3,7 +3,7 @@ import { journeyWaypoints, edgeGeometry, journeyStable, type WalletHub } from ".
 import { setEdgeStableClass, drawEdgeSegment } from "./svgHelpers";
 import { SVG_NS, XLINK_NS } from "./svgNamespace";
 import { dexByName, swapNode, ringRadius, walletHubs, WALLET_HUB_ICON, walletHubByChain, pathEdges, maxCost, journeysByPair, walletJourneyEdges, type PathEdge } from "../state/derivedGraphData";
-import type { Journey } from "../types/graphData";
+import type { Journey, DexNode } from "../types/graphData";
 import { showTooltip, positionTooltip, hideTooltip } from "../ui/tooltip";
 import { nodeTooltipHtml } from "../panels/dexDetails";
 import { edgeTooltipHtml } from "../panels/edgeDetails";
@@ -167,21 +167,30 @@ export class GraphRenderer {
   // voir WalletNode.balance côté Python) : pas d'arête DEX -> DEX à laquelle
   // les rattacher (journeysByPair ne matche que des paires de DEX), donc sans
   // ce passage le graphe resterait vide alors que le header annonce des
-  // opérations choisies. Un segment "chosen" par (hub de départ, DEX
-  // d'arrivée) -- via le second hub si le trajet bridge -- avec les mêmes
-  // badges animés ; le clic ouvre le panel du wallet, où le trajet et son
-  // bouton Execute sont listés (voir panels/walletDetails.ts).
+  // opérations choisies. Un segment "chosen" par paire de hubs consécutifs
+  // dans we.hubChains (un par bridge emprunté, deux bridges possibles --
+  // voir derivedGraphData.ts::WalletJourneyEdge), plus un dernier segment
+  // vers le DEX si `we.to` en est un. we.to === "User payouts" (retrait
+  // utilisateur, voir web_view.py::_nodeLabel) n'a PAS de node DEX à
+  // rejoindre : le trajet s'arrête visuellement au dernier hub (toujours
+  // SOLANA pour un payout, voir Graph._linkWalletPayouts) plutôt que d'être
+  // sauté entièrement faute de node de destination. Le clic ouvre le panel
+  // du wallet, où le trajet et son bouton Execute sont listés (voir
+  // panels/walletDetails.ts).
   private drawWalletJourneyEdges(): void {
     for (const we of walletJourneyEdges.values()) {
-      const hubA = walletHubByChain.get(we.fromChain), hubB = walletHubByChain.get(we.toChain), toNode = dexByName.get(we.to);
-      if (!hubA || !toNode) continue;
-      const waypoints = hubB && hubB !== hubA ? [hubA, hubB, toNode] : [hubA, toNode];
+      const hubs = we.hubChains.map(c => walletHubByChain.get(c)).filter((h): h is WalletHub => !!h);
+      if (hubs.length !== we.hubChains.length) continue;
+      const toNode = dexByName.get(we.to);
+      const waypoints: (WalletHub | DexNode)[] = toNode ? [...hubs, toNode] : hubs;
+      if (waypoints.length < 2) continue;
+      const fromChain = we.hubChains[0]!;
       const total = we.journeys.reduce((s, j) => s + j.amount, 0);
       const approx = we.journeys.some(j => j.plausible);
       const stable = we.journeys[0]!.stable;
-      const e = { from: `Wallet ${we.fromChain}`, to: we.to };
+      const e = { from: `Wallet ${fromChain}`, to: we.to };
       const cost = we.journeys.reduce((s, j) => s + j.totalCost, 0);
-      const tooltip = `<div><b>Wallet ${we.fromChain}</b> → <b>${we.to}</b></div>
+      const tooltip = `<div><b>Wallet ${fromChain}</b> → <b>${we.to}</b></div>
         <div style="margin-top:4px;color:var(--chosen)"><b>Chosen by solver:</b> ${fmt(total)} ${stable} from the wallet's own balance${approx ? " (approximate)" : ""}</div>`;
 
       for (let i = 0; i < waypoints.length - 1; i++) {
@@ -211,7 +220,7 @@ export class GraphRenderer {
         hitPath.addEventListener("mouseenter", (ev) => { path.classList.add("hover"); showTooltip(ev, tooltip); });
         hitPath.addEventListener("mousemove", positionTooltip);
         hitPath.addEventListener("mouseleave", () => { path.classList.remove("hover"); hideTooltip(); });
-        hitPath.addEventListener("click", (ev) => { ev.stopPropagation(); this.callbacks.onSelectWallet(we.fromChain); path.classList.add("highlight"); });
+        hitPath.addEventListener("click", (ev) => { ev.stopPropagation(); this.callbacks.onSelectWallet(fromChain); path.classList.add("highlight"); });
       }
     }
   }

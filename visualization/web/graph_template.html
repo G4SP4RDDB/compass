@@ -1172,20 +1172,28 @@ for (const j of GRAPH_DATA.journeys) {
 // voir WalletNode.balance côté Python) : pas d'arête DEX -> DEX à laquelle
 // les rattacher (journeysByPair ne matche que des paires de DEX), donc sans
 // ce passage le graphe resterait vide alors que le header annonce des
-// opérations choisies. Un segment "chosen" par (hub de départ, DEX
-// d'arrivée) -- via le second hub si le trajet bridge -- avec les mêmes
-// badges animés ; le clic ouvre le panel du wallet, où le trajet et son
-// bouton Execute sont listés (voir renderWalletDetails).
+// opérations choisies. Un segment "chosen" par hub, un par chain traversée
+// -- via autant de hubs intermédiaires que de bridges empruntés -- avec les
+// mêmes badges animés ; le clic ouvre le panel du wallet, où le trajet et
+// son bouton Execute sont listés (voir renderWalletDetails). `to` peut être
+// un DEX OU "User payouts" (voir web_view.py::_nodeLabel) -- un trajet
+// WalletDeficit n'a pas de DEX de destination, GraphRenderer.
+// drawWalletJourneyEdges gère ce cas en s'arrêtant au dernier hub plutôt
+// qu'en cherchant un node DEX inexistant.
 const walletJourneyEdges = new Map();
 for (const j of GRAPH_DATA.journeys) {
     if (!j.fromWallet)
         continue;
     const fromChain = j.from.replace(/^Wallet /, "").split("/")[0];
-    const depositHop = [...j.hops].reverse().find(h => h.testable && h.testable.hopType === "Deposit");
-    const toChain = depositHop ? depositHop.testable.chain : fromChain;
-    const key = `${fromChain}→${toChain}→${j.to}`;
+    const hubChains = [fromChain];
+    for (const h of j.hops) {
+        if (h.testable && h.testable.hopType === "Bridge" && h.testable.toChain && h.testable.toChain !== hubChains[hubChains.length - 1]) {
+            hubChains.push(h.testable.toChain);
+        }
+    }
+    const key = `${hubChains.join("→")}→${j.to}`;
     if (!walletJourneyEdges.has(key))
-        walletJourneyEdges.set(key, { fromChain, toChain, to: j.to, journeys: [] });
+        walletJourneyEdges.set(key, { hubChains, to: j.to, journeys: [] });
     walletJourneyEdges.get(key).journeys.push(j);
 }
 
@@ -2538,22 +2546,32 @@ class GraphRenderer {
     // voir WalletNode.balance côté Python) : pas d'arête DEX -> DEX à laquelle
     // les rattacher (journeysByPair ne matche que des paires de DEX), donc sans
     // ce passage le graphe resterait vide alors que le header annonce des
-    // opérations choisies. Un segment "chosen" par (hub de départ, DEX
-    // d'arrivée) -- via le second hub si le trajet bridge -- avec les mêmes
-    // badges animés ; le clic ouvre le panel du wallet, où le trajet et son
-    // bouton Execute sont listés (voir panels/walletDetails.ts).
+    // opérations choisies. Un segment "chosen" par paire de hubs consécutifs
+    // dans we.hubChains (un par bridge emprunté, deux bridges possibles --
+    // voir derivedGraphData.ts::WalletJourneyEdge), plus un dernier segment
+    // vers le DEX si `we.to` en est un. we.to === "User payouts" (retrait
+    // utilisateur, voir web_view.py::_nodeLabel) n'a PAS de node DEX à
+    // rejoindre : le trajet s'arrête visuellement au dernier hub (toujours
+    // SOLANA pour un payout, voir Graph._linkWalletPayouts) plutôt que d'être
+    // sauté entièrement faute de node de destination. Le clic ouvre le panel
+    // du wallet, où le trajet et son bouton Execute sont listés (voir
+    // panels/walletDetails.ts).
     drawWalletJourneyEdges() {
         for (const we of walletJourneyEdges.values()) {
-            const hubA = walletHubByChain.get(we.fromChain), hubB = walletHubByChain.get(we.toChain), toNode = dexByName.get(we.to);
-            if (!hubA || !toNode)
+            const hubs = we.hubChains.map(c => walletHubByChain.get(c)).filter((h) => !!h);
+            if (hubs.length !== we.hubChains.length)
                 continue;
-            const waypoints = hubB && hubB !== hubA ? [hubA, hubB, toNode] : [hubA, toNode];
+            const toNode = dexByName.get(we.to);
+            const waypoints = toNode ? [...hubs, toNode] : hubs;
+            if (waypoints.length < 2)
+                continue;
+            const fromChain = we.hubChains[0];
             const total = we.journeys.reduce((s, j) => s + j.amount, 0);
             const approx = we.journeys.some(j => j.plausible);
             const stable = we.journeys[0].stable;
-            const e = { from: `Wallet ${we.fromChain}`, to: we.to };
+            const e = { from: `Wallet ${fromChain}`, to: we.to };
             const cost = we.journeys.reduce((s, j) => s + j.totalCost, 0);
-            const tooltip = `<div><b>Wallet ${we.fromChain}</b> → <b>${we.to}</b></div>
+            const tooltip = `<div><b>Wallet ${fromChain}</b> → <b>${we.to}</b></div>
         <div style="margin-top:4px;color:var(--chosen)"><b>Chosen by solver:</b> ${fmt(total)} ${stable} from the wallet's own balance${approx ? " (approximate)" : ""}</div>`;
             for (let i = 0; i < waypoints.length - 1; i++) {
                 const a = waypoints[i], b = waypoints[i + 1];
@@ -2579,7 +2597,7 @@ class GraphRenderer {
                 hitPath.addEventListener("mouseenter", (ev) => { path.classList.add("hover"); showTooltip(ev, tooltip); });
                 hitPath.addEventListener("mousemove", positionTooltip);
                 hitPath.addEventListener("mouseleave", () => { path.classList.remove("hover"); hideTooltip(); });
-                hitPath.addEventListener("click", (ev) => { ev.stopPropagation(); this.callbacks.onSelectWallet(we.fromChain); path.classList.add("highlight"); });
+                hitPath.addEventListener("click", (ev) => { ev.stopPropagation(); this.callbacks.onSelectWallet(fromChain); path.classList.add("highlight"); });
             }
         }
     }

@@ -92,10 +92,33 @@ def decomposeJourneys(graph: Graph) -> list[Journey]:
     for node in graph.nodeList:
         if node.type != NodeType.Wallet or cast(WalletNode, node).balance <= _FLOW_EPS:
             continue
-        while any(remaining.get(i, 0.0) > _FLOW_EPS for i in outEdgesByNode.get(node.nodeIndex, [])):
-            journey = _extractOneJourney(graph, node, remaining, outEdgesByNode, ambiguousNodes)
+        # Capé à node.balance, décrémenté à chaque extraction (pas juste au
+        # premier appel) : sans ce cap, _extractOneJourney (voir plus bas)
+        # suit le flot agrégé sur l'edge SORTANTE de ce wallet jusqu'à son
+        # goulot d'étranglement le plus étroit sur tout le chemin -- qui peut
+        # dépasser largement le solde PROPRE de ce wallet quand l'edge
+        # sortante mélange ce solde à du flot de PASSAGE (ex: WalletNode
+        # ARBITRUM/USDC relayant un swap venu de BSC vers son unique bridge
+        # CCTP sortant). Sans ce cap, un wallet traité tôt dans nodeList
+        # (l'ordre suit l'enum Chain, pas l'ordre topologique du flot --
+        # ARBITRUM précède BSC) s'attribuait la CAPACITÉ ENTIÈRE de l'edge
+        # partagée en aval, épuisant `remaining` avant même que le vrai
+        # wallet d'origine (BSC) ne soit traité -- son propre trajet
+        # (Aden bridge + swap) échouait alors silencieusement dans
+        # _extractOneJourney (plus de candidats sur l'edge déjà épuisée),
+        # perdant tout le flot pourtant réellement choisi par le solveur
+        # (voir la régression découverte en vérifiant le rendu du bridge
+        # Aden sur le graphe : ce trajet manquait entièrement de GRAPH_DATA.
+        # journeys alors qu'il apparaît bien dans operations.txt/le flot
+        # solveur).
+        remainingBalance = cast(WalletNode, node).balance
+        while remainingBalance > _FLOW_EPS and any(
+            remaining.get(i, 0.0) > _FLOW_EPS for i in outEdgesByNode.get(node.nodeIndex, [])
+        ):
+            journey = _extractOneJourney(graph, node, remaining, outEdgesByNode, ambiguousNodes, maxAmount=remainingBalance)
             if journey is None:
                 break
+            remainingBalance -= journey.amount
             journeys.append(journey)
 
     journeys.sort(key=lambda j: j.amount, reverse=True)
@@ -124,6 +147,7 @@ def _extractOneJourney(
     remaining: dict[int, float],
     outEdgesByNode: dict[int, list[int]],
     ambiguousNodes: set[int],
+    maxAmount: float | None = None,
 ) -> Journey | None:
     path: list[int] = []
     visited = {startNode.nodeIndex}
@@ -144,6 +168,8 @@ def _extractOneJourney(
         visited.add(current.nodeIndex)
 
     amount = min(remaining[i] for i in path)
+    if maxAmount is not None:
+        amount = min(amount, maxAmount)
     for i in path:
         remaining[i] -= amount
         if remaining[i] <= _FLOW_EPS:

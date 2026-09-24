@@ -139,9 +139,11 @@ class TestCctpRoutes:
         assert len(cctpEdges) == 1
         assert cctpEdges[0].flow == pytest.approx(10.0)
 
-    def test_usdc_bsc_bridges_then_cctp(self):
-        """USDC on BSC: Aden bridge to Arbitrum (CCTP has no BSC domain),
-        then CCTP to the vault."""
+    def test_usdc_bsc_swaps_bridges_then_swaps_back_before_cctp(self):
+        """USDC on BSC: Aden's internal ledger only carries USDT (see
+        availableBridgeProtocols), so the solver must swap to USDT on BSC
+        first, bridge to Arbitrum, swap back to USDC there, then CCTP to
+        the vault -- a Swap+Bridge+Swap sandwich, not a direct USDC bridge."""
         graph = Graph(
             [],
             swapList=[],
@@ -152,58 +154,49 @@ class TestCctpRoutes:
         graphSolve(graph, _params())
 
         assert _totalPayout(graph) == pytest.approx(10.0)
-        assert _flowingSwapEdges(graph) == []
+        swaps = _flowingSwapEdges(graph)
+        assert len(swaps) == 2
+        bscSwap = next(s for s in swaps if cast(WalletNode, s.u).chain == Chain.BSC)
+        assert cast(WalletNode, bscSwap.u).stable == Stable.USDC
+        assert cast(WalletNode, bscSwap.v).stable == Stable.USDT
+        arbSwap = next(s for s in swaps if cast(WalletNode, s.u).chain == Chain.ARBITRUM)
+        assert cast(WalletNode, arbSwap.u).stable == Stable.USDT
+        assert cast(WalletNode, arbSwap.v).stable == Stable.USDC
         adenEdges = _flowingBridgeEdges(graph, BridgeProtocol.ADEN_INTERNAL)
         assert len(adenEdges) == 1
         assert cast(WalletNode, adenEdges[0].u).chain == Chain.BSC
         assert cast(WalletNode, adenEdges[0].v).chain == Chain.ARBITRUM
-        assert cast(WalletNode, adenEdges[0].u).stable == Stable.USDC
+        assert cast(WalletNode, adenEdges[0].u).stable == Stable.USDT
         cctpEdges = _flowingBridgeEdges(graph, BridgeProtocol.CCTP)
         assert len(cctpEdges) == 1
         assert cctpEdges[0].flow == pytest.approx(10.0)
 
-    def test_usdt_bsc_swaps_on_bsc_first_when_that_is_cheaper(self):
-        """USDT on BSC, cheapest ordering depends on where the swap is
-        cheapest to execute -- here BSC's swap gas is artificially cheap, so
-        the solver should swap BEFORE bridging (bridges as USDC)."""
-        graph = Graph(
-            [],
-            swapList=[],
-            gasFeeService=_PerChainGas({Chain.BSC: 0.001, Chain.ARBITRUM: 5.0}),
-            walletBalances={(Chain.BSC, Stable.USDT): 20.0},
-            walletDeficitUsd=-10.0,
-        )
-        graphSolve(graph, _params())
+    def test_usdt_bsc_always_bridges_as_usdt_and_swaps_on_arbitrum(self):
+        """USDT on BSC: Aden being USDT-only leaves exactly one viable
+        topology -- bridge as USDT, THEN swap to USDC on Arbitrum for CCTP
+        -- unlike before this restriction, gas skew between chains can no
+        longer move the swap to the BSC side (there is no route left where
+        Aden carries USDC), so both cost skews below must produce the same
+        route."""
+        for gasByChain in [{Chain.BSC: 0.001, Chain.ARBITRUM: 5.0}, {Chain.BSC: 5.0, Chain.ARBITRUM: 0.001}]:
+            graph = Graph(
+                [],
+                swapList=[],
+                gasFeeService=_PerChainGas(gasByChain),
+                walletBalances={(Chain.BSC, Stable.USDT): 20.0},
+                walletDeficitUsd=-10.0,
+            )
+            graphSolve(graph, _params())
 
-        assert _totalPayout(graph) == pytest.approx(10.0)
-        swaps = _flowingSwapEdges(graph)
-        assert len(swaps) == 1
-        assert cast(WalletNode, swaps[0].u).chain == Chain.BSC
-        adenEdges = _flowingBridgeEdges(graph, BridgeProtocol.ADEN_INTERNAL)
-        assert len(adenEdges) == 1
-        assert cast(WalletNode, adenEdges[0].u).stable == Stable.USDC  # already swapped before bridging
-
-    def test_usdt_bsc_swaps_on_arbitrum_first_when_that_is_cheaper(self):
-        """Same scenario, opposite cost skew: Arbitrum's swap gas is cheap
-        instead, so the solver should bridge first (as USDT) and swap after
-        landing on Arbitrum -- proving this is a real solver choice, not a
-        hardcoded ordering."""
-        graph = Graph(
-            [],
-            swapList=[],
-            gasFeeService=_PerChainGas({Chain.BSC: 5.0, Chain.ARBITRUM: 0.001}),
-            walletBalances={(Chain.BSC, Stable.USDT): 20.0},
-            walletDeficitUsd=-10.0,
-        )
-        graphSolve(graph, _params())
-
-        assert _totalPayout(graph) == pytest.approx(10.0)
-        swaps = _flowingSwapEdges(graph)
-        assert len(swaps) == 1
-        assert cast(WalletNode, swaps[0].u).chain == Chain.ARBITRUM
-        adenEdges = _flowingBridgeEdges(graph, BridgeProtocol.ADEN_INTERNAL)
-        assert len(adenEdges) == 1
-        assert cast(WalletNode, adenEdges[0].u).stable == Stable.USDT  # bridged before swapping
+            assert _totalPayout(graph) == pytest.approx(10.0)
+            adenEdges = _flowingBridgeEdges(graph, BridgeProtocol.ADEN_INTERNAL)
+            assert len(adenEdges) == 1
+            assert cast(WalletNode, adenEdges[0].u).stable == Stable.USDT
+            swaps = _flowingSwapEdges(graph)
+            assert len(swaps) == 1
+            assert cast(WalletNode, swaps[0].u).chain == Chain.ARBITRUM
+            assert cast(WalletNode, swaps[0].u).stable == Stable.USDT
+            assert cast(WalletNode, swaps[0].v).stable == Stable.USDC
 
     def test_no_wallet_deficit_is_a_pure_transit_wallet_deficit_node(self):
         """Default (walletDeficitUsd=0.0): the single WalletDeficitNode still
@@ -216,8 +209,12 @@ class TestCctpRoutes:
 
     def test_journey_decomposition_follows_the_full_bridge_chain_to_the_vault(self):
         """decomposeJourneys must terminate a journey at the WalletDeficitNode
-        through the REAL multi-hop route (Aden bridge then CCTP), not just a
-        single flat edge -- see visualization/journeys.py _extractOneJourney."""
+        through the REAL multi-hop route (Swap, Aden bridge, Swap, CCTP), not
+        just a single flat edge -- see visualization/journeys.py
+        _extractOneJourney. Also proves _extractOneJourney's maxAmount cap
+        (see decomposeJourneys) doesn't fragment this into multiple partial
+        journeys: BSC's own balance is the only source here, so one journey
+        of the full amount should come out, not several smaller ones."""
         graph = Graph(
             [],
             swapList=[],
@@ -235,20 +232,31 @@ class TestCctpRoutes:
         assert j.fromDex == "Wallet BSC/USDC"
         assert j.toDex == "User payouts"
         assert j.amount == pytest.approx(4.0)
-        # Aden bridge (BSC->Arbitrum), then CCTP (Arbitrum->Solana), then the
-        # final settlement hop into WalletDeficitNode (see _linkWalletPayouts).
-        assert len(j.hops) == 3
-        assert (j.hops[0].bridgeProtocol, cast(WalletNode, j.hops[0].u).chain, cast(WalletNode, j.hops[0].v).chain) == (
+        # Swap (BSC USDC->USDT), Aden bridge (BSC->Arbitrum), Swap (Arbitrum
+        # USDT->USDC), CCTP (Arbitrum->Solana), then the final settlement
+        # hop into WalletDeficitNode (see _linkWalletPayouts).
+        assert len(j.hops) == 5
+        assert (j.hops[0].type, cast(WalletNode, j.hops[0].u).stable, cast(WalletNode, j.hops[0].v).stable) == (
+            EdgeType.Swap,
+            Stable.USDC,
+            Stable.USDT,
+        )
+        assert (j.hops[1].bridgeProtocol, cast(WalletNode, j.hops[1].u).chain, cast(WalletNode, j.hops[1].v).chain) == (
             BridgeProtocol.ADEN_INTERNAL,
             Chain.BSC,
             Chain.ARBITRUM,
         )
-        assert (j.hops[1].bridgeProtocol, cast(WalletNode, j.hops[1].u).chain, cast(WalletNode, j.hops[1].v).chain) == (
+        assert (j.hops[2].type, cast(WalletNode, j.hops[2].u).stable, cast(WalletNode, j.hops[2].v).stable) == (
+            EdgeType.Swap,
+            Stable.USDT,
+            Stable.USDC,
+        )
+        assert (j.hops[3].bridgeProtocol, cast(WalletNode, j.hops[3].u).chain, cast(WalletNode, j.hops[3].v).chain) == (
             BridgeProtocol.CCTP,
             Chain.ARBITRUM,
             Chain.SOLANA,
         )
-        assert j.hops[2].v.type == NodeType.WalletDeficit
+        assert j.hops[4].v.type == NodeType.WalletDeficit
 
 
 class TestCctpScopeRegression:
@@ -260,4 +268,10 @@ class TestCctpScopeRegression:
         assert availableBridgeProtocols(Chain.ARBITRUM, Chain.SOLANA, Stable.USDT) == []
 
     def test_aden_still_the_only_protocol_between_bsc_and_arbitrum(self):
-        assert availableBridgeProtocols(Chain.BSC, Chain.ARBITRUM, Stable.USDC) == [BridgeProtocol.ADEN_INTERNAL]
+        # Aden's internal ledger only carries USDT (see availableBridgeProtocols
+        # and compass_test/runners/aden.py::AdenConnector.supported_stables) --
+        # a USDC imbalance between these two chains has NO direct bridge edge
+        # at all, only Swap+Aden+Swap (see test_usdc_bsc_swaps_bridges_then_
+        # swaps_back_before_cctp above).
+        assert availableBridgeProtocols(Chain.BSC, Chain.ARBITRUM, Stable.USDT) == [BridgeProtocol.ADEN_INTERNAL]
+        assert availableBridgeProtocols(Chain.BSC, Chain.ARBITRUM, Stable.USDC) == []
