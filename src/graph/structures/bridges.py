@@ -79,12 +79,25 @@ def availableBridgeProtocols(sourceChain: Chain, destinationChain: Chain, stable
     protocole entre les deux WalletNode de `stable` sur ces deux chains) :
     une edge PAR PROTOCOLE retourné, le solveur arbitrant entre elles par
     coût/délai comme n'importe quelle paire d'edges parallèles. ADEN_INTERNAL
-    couvre BSC<->ARBITRUM pour n'importe quelle stable ; CCTP couvre
-    ARBITRUM<->SOLANA pour l'USDC uniquement (voir _CCTP_CHAINS). Toute autre
-    combinaison -> liste vide -> pas d'edge de bridge du tout entre ces deux
-    chains pour cette stable."""
+    couvre BSC<->ARBITRUM pour l'USDT uniquement (le ledger interne d'Aden
+    ne gère pas l'USDC — voir compass_test/runners/aden.py::AdenConnector.
+    supported_stables, la même restriction que plan_loader.py::
+    _bridge_hop_supported et web_view.py::_testableHopInfo appliquaient déjà
+    côté exécution ; avant ce garde-fou, le solveur pouvait choisir une
+    edge Bridge/USDC via Aden qui n'existe simplement pas dans la réalité —
+    un déséquilibre USDC entre BSC et Arbitrum doit maintenant composer
+    Swap USDC->USDT (CoW Swap) + ce bridge + Swap USDT->USDC si besoin,
+    exactement comme le docstring de _CCTP_CHAINS plus haut décrit déjà pour
+    BSC->SOLANA via Arbitrum) ; CCTP couvre ARBITRUM<->SOLANA pour l'USDC
+    uniquement (voir _CCTP_CHAINS). Toute autre combinaison -> liste vide ->
+    pas d'edge de bridge du tout entre ces deux chains pour cette stable."""
     protocols: list[BridgeProtocol] = []
-    if sourceChain in _ADEN_BRIDGE_CHAINS and destinationChain in _ADEN_BRIDGE_CHAINS and sourceChain != destinationChain:
+    if (
+        stable == Stable.USDT
+        and sourceChain in _ADEN_BRIDGE_CHAINS
+        and destinationChain in _ADEN_BRIDGE_CHAINS
+        and sourceChain != destinationChain
+    ):
         protocols.append(BridgeProtocol.ADEN_INTERNAL)
     if (
         stable == Stable.USDC
