@@ -90,18 +90,20 @@
   "Extended": {
     "ARBITRUM": {
       "depositDelaySeconds": {
-        "lastMeasuredAt": 1788777301.9095428,
-        "maxSeconds": 15.453186750411987,
-        "meanSeconds": 15.453186750411987,
+        "lastMeasuredAt": 1790170791.1157892,
+        "maxSeconds": 17.93369221687317,
+        "meanSeconds": 16.693439483642578,
         "minSeconds": 15.453186750411987,
-        "n": 1,
+        "n": 2,
         "sampleRunIds": [
-          "20260907T103501Z"
+          "20260907T103501Z",
+          "20260923T133951Z"
         ],
         "samplesSeconds": [
-          15.453186750411987
+          15.453186750411987,
+          17.93369221687317
         ],
-        "stdSeconds": 0.0
+        "stdSeconds": 1.7539822361050017
       },
       "withdrawDelaySeconds": {
         "lastMeasuredAt": 1788777084.036009,

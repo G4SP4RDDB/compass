@@ -24,8 +24,10 @@ _CONNECTOR_CLASSES: dict[str, type[DexConnector]] = {
     # own docstring for why the "secure" withdraw and other deposit paths
     # aren't implemented.
     "Lighter": LighterConnector,
-    # Withdraw only (bridged via Rhino.fi) — build_deposit_tx raises, see
-    # runners/extended.py's own docstring for why.
+    # Both legs bridged via Rhino.fi (build_deposit_tx/withdraw, see
+    # runners/extended.py) — deposit implemented, neither leg's final
+    # submit call has been exercised live yet, see compass_test/README.md's
+    # connector status table.
     "Extended": ExtendedConnector,
     "Ondo Perps": OndoConnector,
 }

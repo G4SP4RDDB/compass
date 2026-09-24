@@ -37,6 +37,20 @@ class BridgeProtocol(Enum):
     CCTP = auto()
 
 
+# Which real DEX (graph.structures.DEXes.DEX.name, matching dex_registry.py)
+# actually implements a protocol's bridge, if any — ADEN_INTERNAL is
+# literally "deposit into Aden on one chain, withdraw from Aden on the
+# other" (see Graph._linkBridges, costing.computeBridgeDelay), so its
+# delay/fee should be able to read Aden's OWN configured per-chain
+# withdraw/deposit figures rather than a hand-picked constant. CCTP has no
+# entry: it isn't any DEX's own ledger, it's Circle's protocol directly
+# (see connectors/cctp.py) — its delay/fee stay the flat estimates in
+# costing.py/this module.
+BRIDGE_PROTOCOL_DEX_NAME: dict[BridgeProtocol, str] = {
+    BridgeProtocol.ADEN_INTERNAL: "Aden",
+}
+
+
 def adenBridgeFeeUsd(sourceChain: Chain, destinationChain: Chain) -> float:
     """Frais forfaitaire du bridge interne d'Aden pour cette route dirigée
     (voir _ADEN_BRIDGE_FEE_USD_BY_DIRECTION) — appelable seulement pour une

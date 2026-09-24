@@ -2,6 +2,7 @@ from enum import Enum, auto
 
 from graph.node import Node
 from graph.structures.bridges import BridgeProtocol
+from graph.structures.DEXes import DEX
 
 
 class EdgeType(Enum):
@@ -17,7 +18,14 @@ class EdgeType(Enum):
 
 
 class Edge:
-    def __init__(self, u: Node, v: Node, type: EdgeType | None = None, bridgeProtocol: BridgeProtocol | None = None):
+    def __init__(
+        self,
+        u: Node,
+        v: Node,
+        type: EdgeType | None = None,
+        bridgeProtocol: BridgeProtocol | None = None,
+        bridgeDex: DEX | None = None,
+    ):
         self.u = u
         self.v = v
         self.type = type
@@ -41,3 +49,13 @@ class Edge:
         # availableBridgeProtocols (une edge par protocole, entre les deux
         # mêmes WalletNode). None pour tout autre type d'edge.
         self.bridgeProtocol = bridgeProtocol
+        # Le DEX RÉEL derrière ce protocole quand il y en a un (voir
+        # graph.structures.bridges.BRIDGE_PROTOCOL_DEX_NAME) — ADEN_INTERNAL
+        # uniquement aujourd'hui, résolu par Graph._linkBridges depuis le
+        # dexList reçu par Graph.__init__ (le même objet DEX que ses propres
+        # edges Withdraw/Deposit, config-tab overrides comprises). None pour
+        # CCTP (pas de DEX derrière) et pour toute edge non-Bridge — voir
+        # costing.computeBridgeDelay, qui lit directement
+        # bridgeDex.depositDelaySecondsByChain/withdrawDelaySecondsByChain
+        # quand ce champ est renseigné, plutôt que la constante forfaitaire.
+        self.bridgeDex = bridgeDex

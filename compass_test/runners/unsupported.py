@@ -29,9 +29,11 @@ Reasons, so the gap is legible rather than mysterious:
     chains, a new third-party dependency), decided against for now.
 Hyperliquid, Lighter, Extended and Ondo Perps moved OUT of this table — see
 runners/hyperliquid.py, runners/lighter.py, runners/extended.py and
-runners/ondo.py (Extended: withdraw only — deposit still lands here
-implicitly via NotImplementedError raised directly in the connector, not via
-this module; Lighter now supports both fast withdraw and fast/CCTP deposit).
+runners/ondo.py (Extended and Lighter both now implement withdraw AND
+deposit — Extended's deposit via the same Rhino.fi bridge as its withdraw,
+Lighter's via a separate CCTP-based "fast deposit" flow, see each file's own
+docstring — untested live, not unimplemented; compass_test/README.md's
+connector status table has the live-verification detail per leg).
 Ondo Perps turned out to be documented after all —
 the earlier "no Bearer JWT handshake" reason was based on the "Builder
 Integration Guide" page alone; the separate "API Reference" pages
