@@ -291,6 +291,36 @@ The in-memory graph behind the UI picks the new values up at the next build
 measurement overshoots the real credit time — noticeable next to a ~3s
 Arbitrum hop, now that those measurements drive `Time(e)`.
 
+## Metrics dashboard (optional, dev-only)
+
+The "Rebalancings Tracker" page (`/metrics` on the graph viewer server)
+charts cost/delay history across runs. It reads from a local TimescaleDB
+container, not the JSON reports directly — those files under `reports/`
+stay the durable source of truth either way. If the container isn't
+running, that one page shows a "Metrics unavailable" banner; nothing else
+(the graph viewer, report saving, live execution) is affected — see
+`reporter.py`'s best-effort write, which only warns on failure.
+
+To bring it up:
+
+```bash
+docker compose up -d          # starts compass_timescaledb on localhost:5433
+                               # (see docker-compose.yml — 5433 to avoid
+                               # clashing with any local Postgres on 5432)
+```
+
+The schema (`sql/schema.sql`) applies automatically on the container's
+first boot. To populate it from reports already on disk (not needed for a
+fresh setup going forward — `reporter.py` writes new runs to it live):
+
+```bash
+python -m compass_test.scripts.backfill_metrics_db
+```
+
+Connection string defaults to
+`postgresql://compass:compass_dev_only@localhost:5433/compass_metrics`
+(`config.py`'s `TIMESCALE_DB_URL`, overridable via the same-named env var).
+
 ## Usage
 
 ```bash
