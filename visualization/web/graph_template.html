@@ -540,7 +540,15 @@
     border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer;
   }
   .tab-btn:hover { border-color: var(--accent); color: var(--text); }
-  .tab-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  /* Subtle tinted fill + accent-colored text/border, not a solid saturated
+     block with white text — same color-mix() technique as .mode-btn:hover
+     above, applied here so the active tab reads as "selected" without
+     being the loudest thing in the header. */
+  .tab-btn.active {
+    background: color-mix(in srgb, var(--accent) 16%, var(--panel-bg));
+    border-color: var(--accent);
+    color: var(--accent);
+  }
 
   #exploreView { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   #exploreView.hidden { display: none; }
