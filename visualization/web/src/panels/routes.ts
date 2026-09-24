@@ -2,6 +2,7 @@ import { fmt, fmtDuration, typeSlug, typeTag } from "../utils/format";
 import type { Hop, RouteEstimate } from "../types/graphData";
 import type { TestableHopInfo } from "../types/api";
 import { executeButtonHtml } from "../execution/liveExecution";
+import { hopStablesLabel } from "../execution/testHop";
 
 // `testable`: only true for hops in the solver's ACTUAL chosen journey (see
 // panels/edgeDetails.ts) — never for the "Estimated routes" cheapest/fastest
@@ -16,18 +17,36 @@ export function hopHtml(h: Hop, testable?: boolean, executeAmount?: number): str
   // bridge protocol the solver actually picked for it (GENERIC / CCTP V1 /
   // CCTP V2), null for any non-Bridge hop.
   const protocol = h.protocol ? ` <span class="hop-protocol">via ${h.protocol}</span>` : "";
-  const testSection = (testable && h.testable) ? testEdgeSectionHtml(h.testable, executeAmount) : "";
+  const testSection = (testable && h.testable) ? testEdgeSectionHtml(h, executeAmount) : "";
   return `<div class="hop type-${typeSlug(h.type)}">${typeTag(h.type)} <span class="hop-cost">${fmt(h.cost)} · ${fmtDuration(h.time)}</span><b>${h.from}</b> → ${h.to}${protocol}${testSection}</div>`;
 }
 
-export function testEdgeSectionHtml(t: TestableHopInfo, executeAmount?: number): string {
+export function testEdgeSectionHtml(h: Hop, executeAmount?: number): string {
+  const t = h.testable!;
   // executeAmount: the solver's amount for this journey, so the hop can be
   // executed for real at that amount (see execution/liveExecution.ts's
-  // executeButtonHtml). Absent for the informational "Estimated routes" panel.
+  // executeButtonHtml). Absent for the informational "Estimated routes" panel
+  // — the summary block below is Execute-specific for the same reason: there
+  // is no real chosen amount to summarize outside that context.
   const exec = executeAmount ? ` ${executeButtonHtml(t, executeAmount)}` : "";
+  const summary = executeAmount ? hopSummaryHtml(h, t, executeAmount) : "";
   return `<div class="hop-test">
+    ${summary}
     <button class="test-edge-btn" data-dex="${t.dex}" data-chain="${t.chain}" data-stable="${t.stable}" data-to-stable="${t.toStable || ""}" data-hop-type="${t.hopType}">Test This Edge</button>${exec}
     <div class="hop-test-result"></div>
+  </div>`;
+}
+
+// Plain-language summary shown right above the Execute button — someone
+// unfamiliar with the interface shouldn't have to parse the compact
+// "type-badge · cost · duration · from → to" header line above to know
+// what a hop actually moves before running it for real.
+function hopSummaryHtml(h: Hop, t: TestableHopInfo, amount: number): string {
+  return `<div class="hop-summary">
+    <div class="test-row"><span class="test-label">Amount</span><span>$${fmt(amount)}</span></div>
+    <div class="test-row"><span class="test-label">Estimated Time</span><span>${fmtDuration(h.time)}</span></div>
+    <div class="test-row"><span class="test-label">Cost</span><span>$${fmt(h.cost)}</span></div>
+    <div class="test-row"><span class="test-label">Moved Stablecoin</span><span>${hopStablesLabel(t)}</span></div>
   </div>`;
 }
 

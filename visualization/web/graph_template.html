@@ -325,6 +325,17 @@
      only until "Run LIVE" is deliberately opened AND confirmed — see
      compass_test/README.md "Safety model". */
   .hop-test { margin-top: 4px; clear: both; }
+  /* Plain-language summary (amount/time/cost/stablecoin) shown above the
+     Execute button — the compact "type-badge · cost · duration" header
+     line on .hop itself stays terse for scanning a whole list of hops;
+     this spells the same numbers out for the one hop actually about to be
+     executed for real, see panels/routes.ts::hopSummaryHtml. */
+  .hop-summary {
+    background: var(--panel-bg); border: 1px solid var(--border); border-radius: 5px;
+    padding: 5px 8px; margin: 4px 0 6px; font-size: 10.5px;
+  }
+  .hop-summary .test-row { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
+  .hop-summary .test-label { color: var(--muted); }
   .test-edge-btn {
     font-size: 10px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--accent);
     background: transparent; color: var(--accent); cursor: pointer; font-weight: 600;
@@ -1992,17 +2003,34 @@ function hopHtml(h, testable, executeAmount) {
     // bridge protocol the solver actually picked for it (GENERIC / CCTP V1 /
     // CCTP V2), null for any non-Bridge hop.
     const protocol = h.protocol ? ` <span class="hop-protocol">via ${h.protocol}</span>` : "";
-    const testSection = (testable && h.testable) ? testEdgeSectionHtml(h.testable, executeAmount) : "";
+    const testSection = (testable && h.testable) ? testEdgeSectionHtml(h, executeAmount) : "";
     return `<div class="hop type-${typeSlug(h.type)}">${typeTag(h.type)} <span class="hop-cost">${fmt(h.cost)} · ${fmtDuration(h.time)}</span><b>${h.from}</b> → ${h.to}${protocol}${testSection}</div>`;
 }
-function testEdgeSectionHtml(t, executeAmount) {
+function testEdgeSectionHtml(h, executeAmount) {
+    const t = h.testable;
     // executeAmount: the solver's amount for this journey, so the hop can be
     // executed for real at that amount (see execution/liveExecution.ts's
-    // executeButtonHtml). Absent for the informational "Estimated routes" panel.
+    // executeButtonHtml). Absent for the informational "Estimated routes" panel
+    // — the summary block below is Execute-specific for the same reason: there
+    // is no real chosen amount to summarize outside that context.
     const exec = executeAmount ? ` ${executeButtonHtml(t, executeAmount)}` : "";
+    const summary = executeAmount ? hopSummaryHtml(h, t, executeAmount) : "";
     return `<div class="hop-test">
+    ${summary}
     <button class="test-edge-btn" data-dex="${t.dex}" data-chain="${t.chain}" data-stable="${t.stable}" data-to-stable="${t.toStable || ""}" data-hop-type="${t.hopType}">Test This Edge</button>${exec}
     <div class="hop-test-result"></div>
+  </div>`;
+}
+// Plain-language summary shown right above the Execute button — someone
+// unfamiliar with the interface shouldn't have to parse the compact
+// "type-badge · cost · duration · from → to" header line above to know
+// what a hop actually moves before running it for real.
+function hopSummaryHtml(h, t, amount) {
+    return `<div class="hop-summary">
+    <div class="test-row"><span class="test-label">Amount</span><span>$${fmt(amount)}</span></div>
+    <div class="test-row"><span class="test-label">Estimated Time</span><span>${fmtDuration(h.time)}</span></div>
+    <div class="test-row"><span class="test-label">Cost</span><span>$${fmt(h.cost)}</span></div>
+    <div class="test-row"><span class="test-label">Moved Stablecoin</span><span>${hopStablesLabel(t)}</span></div>
   </div>`;
 }
 // Deux estimations Dijkstra indépendantes (voir web_view.py:_computeDexPaths)

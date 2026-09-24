@@ -307,6 +307,17 @@
      only until "Run LIVE" is deliberately opened AND confirmed — see
      compass_test/README.md "Safety model". */
   .hop-test { margin-top: 4px; clear: both; }
+  /* Plain-language summary (amount/time/cost/stablecoin) shown above the
+     Execute button — the compact "type-badge · cost · duration" header
+     line on .hop itself stays terse for scanning a whole list of hops;
+     this spells the same numbers out for the one hop actually about to be
+     executed for real, see panels/routes.ts::hopSummaryHtml. */
+  .hop-summary {
+    background: var(--panel-bg); border: 1px solid var(--border); border-radius: 5px;
+    padding: 5px 8px; margin: 4px 0 6px; font-size: 10.5px;
+  }
+  .hop-summary .test-row { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
+  .hop-summary .test-label { color: var(--muted); }
   .test-edge-btn {
     font-size: 10px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--accent);
     background: transparent; color: var(--accent); cursor: pointer; font-weight: 600;
