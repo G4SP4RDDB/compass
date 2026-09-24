@@ -12,36 +12,24 @@
      colors: gas is paid on a Deposit-type leg, fee on a Withdraw-type leg,
      slippage on a Swap-type leg (see executor.py), so reusing the graph
      view's own per-hop-type colors keeps the two pages semantically
-     consistent, not just visually. */
+     consistent, not just visually.
+     One navy theme, always — no longer switches with the OS's light/dark
+     preference, same values as graph_template.html's :root (see its own
+     comment for why): --panel-bg is the Dagmar Capital brand navy, --bg a
+     darker navy behind it, rest reused from the former dark-theme block. */
   :root {
-    --bg: #f5f6f8;
-    --panel-bg: #ffffff;
-    --text: #1a1d21;
-    --muted: #6b7280;
-    --border: #dde1e6;
-    --accent: #2563eb;
-    --pos: #2fae5e;
-    --neg: #e05252;
-    --grid: #e6e8eb;
-    --type-withdraw: #c2410c;
-    --type-deposit: #0d9488;
-    --type-swap: #9333ea;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #14161a;
-      --panel-bg: #1c1f24;
-      --text: #e8eaed;
-      --muted: #9aa0a8;
-      --border: #33383f;
-      --accent: #5b9bff;
-      --pos: #3ecb72;
-      --neg: #ff6b6b;
-      --grid: #2a2e34;
-      --type-withdraw: #fb923c;
-      --type-deposit: #2dd4bf;
-      --type-swap: #c084fc;
-    }
+    --bg: #050e1c;
+    --panel-bg: #0b2340;
+    --text: #e8eaed;
+    --muted: #9aa0a8;
+    --border: #1e3a5f;
+    --accent: #7b93f0;
+    --pos: #3ecb72;
+    --neg: #ff6b6b;
+    --grid: #122a47;
+    --type-withdraw: #fb923c;
+    --type-deposit: #2dd4bf;
+    --type-swap: #c084fc;
   }
   * { box-sizing: border-box; }
   html, body {

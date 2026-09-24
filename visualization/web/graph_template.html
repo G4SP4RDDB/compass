@@ -16,52 +16,46 @@
 <title>Compass — Graph Viewer</title>
 <style>
 /* styles/main.css */
-:root {
-    --bg: #f5f6f8;
-    --panel-bg: #ffffff;
-    --text: #1a1d21;
-    --muted: #6b7280;
-    --border: #dde1e6;
-    --accent: #4169e1;
-    --pos: #2fae5e;
-    --neg: #e05252;
+/* One navy theme, always — no longer switches with the OS's light/dark
+     preference (per explicit request: replace both light and dark with a
+     single navy-blue identity, not a per-mode tint). --panel-bg is the
+     Dagmar Capital brand navy (#0B2340, the same value used in the logo's
+     own fills, see index.template.html) so the header/cards read as "the
+     brand color", with --bg a darker navy behind them for layering — same
+     lighter-panel-over-darker-page relationship the old dark theme used,
+     just re-hued. The rest of the palette below is the former dark-theme
+     block verbatim: already tuned for legibility on a dark background, so
+     reused as-is rather than re-deriving new contrast-safe values — only
+     --border gets a navy tint (was a neutral gray) for cohesion with the
+     new background hue.
+     Former light-theme block removed entirely along with the
+     prefers-color-scheme media query that gated this one. */
+  :root {
+    --bg: #050e1c;
+    --panel-bg: #0b2340;
+    --text: #e8eaed;
+    --muted: #9aa0a8;
+    --border: #1e3a5f;
+    --accent: #7b93f0;
+    --pos: #3ecb72;
+    --neg: #ff6b6b;
     --zero: #8b93a1;
-    --chosen: #d97706;
+    --chosen: #fbbf24;
     /* Couleurs de marque des deux stables modélisées (voir graph.structures.DEXes.Stable) :
        bleu Circle (USDC) / vert Tether (USDT), utilisées à la fois pour la
        couleur de l'edge et le badge animé dessus (voir createFlowDots) —
        même couleur des deux côtés, une seule source de vérité ici. */
-    --usdc: #2775ca;
-    --usdt: #26a17b;
+    --usdc: #4098e0;
+    --usdt: #2ecc9a;
     /* Une couleur par type d'opération (voir web_view.py:_hopKind) : distingue
        d'un coup d'œil, dans la liste comme dans les hops détaillés, Withdraw/
        Deposit (comptabilité interne à un DEX, jamais de mouvement de fonds
        entre deux parties) d'On-chain transfer/Bridge/Swap (mouvement réel). */
-    --type-withdraw: #c2410c;
-    --type-deposit: #0d9488;
-    --type-transfer: #2563eb;
-    --type-bridge: #d97706;
-    --type-swap: #9333ea;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #14161a;
-      --panel-bg: #1c1f24;
-      --text: #e8eaed;
-      --muted: #9aa0a8;
-      --border: #33383f;
-      --accent: #7b93f0;
-      --pos: #3ecb72;
-      --neg: #ff6b6b;
-      --chosen: #fbbf24;
-      --usdc: #4098e0;
-      --usdt: #2ecc9a;
-      --type-withdraw: #fb923c;
-      --type-deposit: #2dd4bf;
-      --type-transfer: #60a5fa;
-      --type-bridge: #fbbf24;
-      --type-swap: #c084fc;
-    }
+    --type-withdraw: #fb923c;
+    --type-deposit: #2dd4bf;
+    --type-transfer: #60a5fa;
+    --type-bridge: #fbbf24;
+    --type-swap: #c084fc;
   }
   * { box-sizing: border-box; }
   html, body {
