@@ -21,11 +21,21 @@ export function hopCtxFromButton(btn: HTMLElement): TestableHopInfo {
     hopType: btn.dataset.hopType as TestableHopInfo["hopType"],
   };
   if (btn.dataset.toStable) ctx.toStable = btn.dataset.toStable;
+  if (btn.dataset.toChain) ctx.toChain = btn.dataset.toChain;
   return ctx;
 }
 
 export function hopStablesLabel(ctx: TestableHopInfo): string {
   return ctx.toStable ? `${ctx.stable} → ${ctx.toStable}` : ctx.stable;
+}
+
+// Bridge only: the chain crossing ("BSC → ARBITRUM") — same shape as
+// hopStablesLabel above, just the other axis (Bridge moves the same stable
+// across two chains, Swap moves two stables on the same chain, so exactly
+// one of these two helpers ever has something to show beyond the bare
+// chain/stable).
+export function hopChainLabel(ctx: TestableHopInfo): string {
+  return ctx.toChain ? `${ctx.chain} → ${ctx.toChain}` : ctx.chain;
 }
 
 // Chosen Operations row: the result div is the row's last child; in a
@@ -136,7 +146,7 @@ export function showLiveConfirm(
   box.innerHTML = `
     <div class="live-warning">⚠ This will move real funds — no undo</div>
     <dl>
-      <dt>Hop</dt><dd>${ctx.hopType} · ${ctx.dex} on ${ctx.chain} (${hopStablesLabel(ctx)})</dd>
+      <dt>Hop</dt><dd>${ctx.hopType} · ${ctx.dex} on ${hopChainLabel(ctx)} (${hopStablesLabel(ctx)})</dd>
       <dt>Amount</dt><dd>$${data.resolvedAmountUsd.toFixed(2)}</dd>
       <dt>Wallet</dt><dd style="word-break:break-all">${data.walletAddress || "n/a"}</dd>
     </dl>
@@ -177,7 +187,7 @@ async function runLiveHop(
   // arrives instead of waiting for the whole thing to finish. Shown in the
   // popup (not just inline) so it stays visible regardless of where on the
   // page the Execute/Run LIVE button was.
-  const hopLabel = `${ctx.hopType} · ${ctx.dex} on ${ctx.chain} (${hopStablesLabel(ctx)})`;
+  const hopLabel = `${ctx.hopType} · ${ctx.dex} on ${hopChainLabel(ctx)} (${hopStablesLabel(ctx)})`;
   const modalStagesEl = execModal.open(hopLabel);
   const tracker = createStageTracker(modalStagesEl, ctx.dex);
   // Placeholder only for the brief gap before the backend's own first

@@ -59,8 +59,11 @@ export interface TestableHopInfo {
   dex: string;
   chain: string;
   stable: string;
+  // Swap only: the stable bought (`stable` is the one sold).
   toStable?: string;
-  hopType: "Withdraw" | "Deposit" | "Swap";
+  // Bridge only: the destination chain (`chain` is the source chain).
+  toChain?: string;
+  hopType: "Withdraw" | "Deposit" | "Swap" | "Bridge";
 }
 
 export interface Hop {

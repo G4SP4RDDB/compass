@@ -1,7 +1,7 @@
 import { fmt } from "../utils/format";
 import { getExecutionStatus } from "../api/client";
-import type { ExecutionStatus } from "../types/api";
-import { hopCtxFromButton, showLiveConfirm, executeResultEl } from "./testHop";
+import type { ExecutionStatus, TestableHopInfo } from "../types/api";
+import { hopCtxFromButton, showLiveConfirm, executeResultEl, hopChainLabel } from "./testHop";
 import { updateExecuteAllButton } from "./executeAll";
 
 // "Execute" — exécution LIVE d'un hop CHOISI PAR LE SOLVEUR, au montant que
@@ -11,18 +11,13 @@ import { updateExecuteAllButton } from "./executeAll";
 // "YES", caps $ de executor.run_hop — un montant au-dessus du cap est
 // refusé par le serveur et affiché tel quel ici). GET /api/execution-status
 // dit d'avance si le live est possible, pour griser le bouton sinon.
-export function executeButtonHtml(
-  t: { dex: string; chain: string; stable: string; toStable?: string; hopType: string },
-  amount: number,
-  from?: string,
-  to?: string
-): string {
+export function executeButtonHtml(t: TestableHopInfo, amount: number, from?: string, to?: string): string {
   // data-from/data-to: the op's own `from`/`to` labels (see
   // computeChosenOperations's _describe output) — NOT used for the single
   // Execute button itself, only so runAllLive (Execute All) can find which
   // later row depends on this one's output (its `to`) without re-deriving
   // it from anywhere else.
-  return `<button class="execute-btn" data-dex="${t.dex}" data-chain="${t.chain}" data-stable="${t.stable}" data-to-stable="${t.toStable || ""}" data-hop-type="${t.hopType}" data-amount="${amount}" data-from="${from || ""}" data-to="${to || ""}" title="Move $${fmt(amount)} for real on ${t.dex} (${t.hopType} on ${t.chain})">Execute</button>`;
+  return `<button class="execute-btn" data-dex="${t.dex}" data-chain="${t.chain}" data-stable="${t.stable}" data-to-stable="${t.toStable || ""}" data-to-chain="${t.toChain || ""}" data-hop-type="${t.hopType}" data-amount="${amount}" data-from="${from || ""}" data-to="${to || ""}" title="Move $${fmt(amount)} for real on ${t.dex} (${t.hopType} on ${hopChainLabel(t)})">Execute</button>`;
 }
 
 export function bindExecuteButtons(): void {

@@ -19,6 +19,8 @@ export interface PlannedHop {
   chain: string;
   stable: string;
   toStable?: string;
+  // Bridge only: the destination chain (`chain` is the source chain).
+  toChain?: string;
   hopType: string;
   estimatedCostUsd: number;
   estimatedTimeSeconds: number;
@@ -59,6 +61,7 @@ export interface TestHopRequestBody {
   chain: string;
   stable: string;
   toStable?: string;
+  toChain?: string;
   hopType: string;
   live: boolean;
   confirm?: "YES";

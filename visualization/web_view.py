@@ -11,7 +11,7 @@ from graph.graph import Graph
 from graph.node import DepositNode, Node, NodeType, SourceNode, WalletNode, WithdrawNode
 from graph.structures.bridges import BridgeProtocol
 from graph.solver import RouteMode
-from graph.structures.DEXes import Chain, DEX, MeasuredDelay
+from graph.structures.DEXes import Chain, DEX, MeasuredDelay, Stable
 from graph.urgency import TimeWeightParams
 from visualization.dex_branding import DEX_BRANDING
 from visualization.journeys import Journey, decomposeJourneys
@@ -98,14 +98,17 @@ _BRIDGE_PROTOCOL_LABEL: dict[BridgeProtocol, str] = {
 
 def _testableHopInfo(edge: Edge) -> dict[str, str] | None:
     """(dex, chain, stable, hopType) for a Withdraw/Deposit edge, plus
-    `toStable` (and the venue name as `dex`) for a Swap edge, structured for
-    the frontend's "Test This Edge" button — POST /api/test-hop (see
-    visualization/server.py) takes exactly these strings, no parsing of the
-    human-readable `from`/`to` labels required. None for any other hop kind
-    (Bridge/On-chain transfer), which compass_test does not test (see
-    compass_test/plan_loader.py — same restriction, same reason). A Swap is
-    only testable on the chains compass_test wires CoW Swap for (BSC,
-    Arbitrum — compass_test/runners/cowswap.py); elsewhere it's None too.
+    `toStable` (and the venue name as `dex`) for a Swap edge, or `toChain`
+    (and the bridge protocol's venue name as `dex`, "Aden"/"CCTP") for a
+    Bridge edge, structured for the frontend's "Test This Edge" button —
+    POST /api/test-hop (see visualization/server.py) takes exactly these
+    strings, no parsing of the human-readable `from`/`to` labels required.
+    None for On-chain transfer (never a distinct testable op — see
+    _isInternalHop) and for any Swap/Bridge edge outside what
+    compass_test's connectors actually cover (BSC/Arbitrum for Swap;
+    Aden's USDT BSC<->Arbitrum ledger or CCTP's USDC Arbitrum<->Solana
+    pipeline for Bridge — see compass_test/plan_loader.py's
+    _bridge_hop_supported, same restriction, same reason).
 
     Deliberately duplicates compass_test/plan_loader.py's
     _planned_hop_from_edge logic (same Edge model) rather than importing
@@ -140,6 +143,33 @@ def _testableHopInfo(edge: Edge) -> dict[str, str] | None:
             "toStable": walletOut.stable.name,
             "hopType": "Swap",
         }
+    if edge.type == EdgeType.Bridge:
+        walletIn, walletOut = cast(WalletNode, edge.u), cast(WalletNode, edge.v)
+        if edge.bridgeProtocol == BridgeProtocol.ADEN_INTERNAL:
+            if not (
+                walletIn.stable == _ADEN_BRIDGE_TESTABLE_STABLE
+                and walletIn.chain in _ADEN_BRIDGE_TESTABLE_CHAINS
+                and walletOut.chain in _ADEN_BRIDGE_TESTABLE_CHAINS
+            ):
+                return None
+            dexName = "Aden"
+        elif edge.bridgeProtocol == BridgeProtocol.CCTP:
+            if not (
+                walletIn.stable == _CCTP_BRIDGE_TESTABLE_STABLE
+                and walletIn.chain in _CCTP_BRIDGE_TESTABLE_CHAINS
+                and walletOut.chain in _CCTP_BRIDGE_TESTABLE_CHAINS
+            ):
+                return None
+            dexName = "CCTP"
+        else:
+            return None
+        return {
+            "dex": dexName,
+            "chain": walletIn.chain.name,
+            "toChain": walletOut.chain.name,
+            "stable": walletIn.stable.name,
+            "hopType": "Bridge",
+        }
     return None
 
 
@@ -147,6 +177,20 @@ def _testableHopInfo(edge: Edge) -> dict[str, str] | None:
 # for the same reason _testableHopInfo duplicates plan_loader's logic (no
 # compass_test import from a module loaded on every render).
 _SWAP_TESTABLE_CHAINS = frozenset({Chain.BSC, Chain.ARBITRUM})
+
+# Mirror of compass_test/runners/aden.py::AdenConnector.supported_stables/
+# supported_chains — Aden's own internal ledger, USDT only, BSC<->Arbitrum
+# only. CCTP has no DEX-side registry to mirror (see compass_test/
+# cctp_runner.py: no DEX on either side of that bridge) — its scope is
+# fixed at ARBITRUM<->SOLANA USDC, matching
+# graph.structures.bridges._CCTP_CHAINS. Both duplicated here for the same
+# reason _SWAP_TESTABLE_CHAINS is: no compass_test import from a module
+# loaded on every render (see plan_loader.py's _bridge_hop_supported for
+# the source of truth this mirrors).
+_ADEN_BRIDGE_TESTABLE_CHAINS = frozenset({Chain.BSC, Chain.ARBITRUM})
+_ADEN_BRIDGE_TESTABLE_STABLE = Stable.USDT
+_CCTP_BRIDGE_TESTABLE_CHAINS = frozenset({Chain.ARBITRUM, Chain.SOLANA})
+_CCTP_BRIDGE_TESTABLE_STABLE = Stable.USDC
 
 
 def _buildHopList(edges: list[Edge]) -> list[dict[str, Any]]:
@@ -456,7 +500,10 @@ def computeChosenOperations(graph: Graph) -> list[dict[str, Any]]:
             # Bouton "Execute" de l'onglet Chosen Operations : exécution
             # LIVE de ce hop précis, au montant `amount` choisi par le
             # solveur (POST /api/test-hop, voir graph_template.html). null
-            # pour Swap/Bridge, que compass_test n'exécute pas.
+            # seulement pour Swap/Bridge hors de la portée réelle des
+            # connecteurs (chains/stable non couverts — voir
+            # _testableHopInfo) ou pour un On-chain transfer (jamais une
+            # opération distincte, voir _isInternalHop).
             "testable": _testableHopInfo(edge),
         }
         for edge in graph.edgeList

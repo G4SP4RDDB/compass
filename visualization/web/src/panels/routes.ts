@@ -8,9 +8,12 @@ import { hopStablesLabel } from "../execution/testHop";
 // panels/edgeDetails.ts) — never for the "Estimated routes" cheapest/fastest
 // Dijkstra panel, which is informative only, not something the solver
 // picked (see web_view.py's two-views comment). h.testable itself (from
-// web_view.py::_testableHopInfo) is null for Bridge hops regardless —
-// compass_test tests Withdraw/Deposit, and Swap (via CoW Swap, BSC/Arbitrum
-// only — `toStable` then names the stable bought).
+// web_view.py::_testableHopInfo) is null for any hop outside what
+// compass_test's connectors actually cover: Withdraw/Deposit always
+// qualify, Swap only via CoW Swap on BSC/Arbitrum (`toStable` then names
+// the stable bought), Bridge only via Aden's USDT BSC<->Arbitrum ledger or
+// CCTP's USDC Arbitrum<->Solana pipeline (`toChain` then names the
+// destination chain).
 export function hopHtml(h: Hop, testable?: boolean, executeAmount?: number): string {
   // A cross-chain move is one hop here (entry/cross/exit already merged
   // server-side, see web_view.py:_buildHopList) — h.protocol names which
@@ -32,7 +35,7 @@ export function testEdgeSectionHtml(h: Hop, executeAmount?: number): string {
   const summary = executeAmount ? hopSummaryHtml(h, t, executeAmount) : "";
   return `<div class="hop-test">
     ${summary}
-    <button class="test-edge-btn" data-dex="${t.dex}" data-chain="${t.chain}" data-stable="${t.stable}" data-to-stable="${t.toStable || ""}" data-hop-type="${t.hopType}">Test This Edge</button>${exec}
+    <button class="test-edge-btn" data-dex="${t.dex}" data-chain="${t.chain}" data-stable="${t.stable}" data-to-stable="${t.toStable || ""}" data-to-chain="${t.toChain || ""}" data-hop-type="${t.hopType}">Test This Edge</button>${exec}
     <div class="hop-test-result"></div>
   </div>`;
 }

@@ -544,14 +544,20 @@ def postTestHop():
     # Swap only: the stable BOUGHT (`stable` is the one sold). The `dex` of
     # a Swap hop is the venue name (CoW Swap) — see web_view._testableHopInfo.
     toStable = payload.get("toStable")
+    # Bridge only: the destination chain (`chain` above is the source/
+    # deposit chain) — see web_view._testableHopInfo's "toChain" field and
+    # hop_runner.run_single_hop's to_chain_name parameter.
+    toChain = payload.get("toChain")
     live = bool(payload.get("live", False))
 
     if not all(isinstance(v, str) and v for v in (dex, hopTypeStr, chain, stable)):
         return jsonify({"ok": False, "error": "dex, hopType, chain, stable are required strings"}), 400
-    if hopTypeStr not in ("Withdraw", "Deposit", "Swap"):
-        return jsonify({"ok": False, "error": f'hopType must be "Withdraw", "Deposit" or "Swap", got {hopTypeStr!r}'}), 400
+    if hopTypeStr not in ("Withdraw", "Deposit", "Swap", "Bridge"):
+        return jsonify({"ok": False, "error": f'hopType must be "Withdraw", "Deposit", "Swap" or "Bridge", got {hopTypeStr!r}'}), 400
     if hopTypeStr == "Swap" and not (isinstance(toStable, str) and toStable):
         return jsonify({"ok": False, "error": "a Swap hop needs toStable (the stable bought)"}), 400
+    if hopTypeStr == "Bridge" and not (isinstance(toChain, str) and toChain):
+        return jsonify({"ok": False, "error": "a Bridge hop needs toChain (the destination chain)"}), 400
     if live and payload.get("confirm") != "YES":
         return jsonify({"ok": False, "error": 'live run requires confirm: "YES" in the request body'}), 400
 
@@ -577,10 +583,10 @@ def postTestHop():
         # before we know if the hop will fail), errors that used to be a
         # 400/403/500 status are instead carried in that terminal event's
         # own "status" field — the frontend checks that, not res.ok.
-        return Response(stream_with_context(_streamLiveHop(dex, hopType, chain, stable, amountUsd, toStable)), mimetype="application/x-ndjson")
+        return Response(stream_with_context(_streamLiveHop(dex, hopType, chain, stable, amountUsd, toStable, toChain)), mimetype="application/x-ndjson")
 
     try:
-        result = run_single_hop(dex, hopType, chain, stable, amount_usd=amountUsd, live=False, to_stable_name=toStable)
+        result = run_single_hop(dex, hopType, chain, stable, amount_usd=amountUsd, live=False, to_stable_name=toStable, to_chain_name=toChain)
     except HopValidationError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except test_executor.SafetyCapError as exc:
@@ -620,7 +626,9 @@ def _testHopResultPayload(result, live: bool) -> dict:
     }
 
 
-def _streamLiveHop(dex: str, hopType: HopType, chain: str, stable: str, amountUsd: float | None, toStable: str | None):
+def _streamLiveHop(
+    dex: str, hopType: HopType, chain: str, stable: str, amountUsd: float | None, toStable: str | None, toChain: str | None
+):
     """Generator backing the streamed branch of postTestHop above: runs
     run_single_hop(live=True) on a background thread (it blocks on
     time.sleep-based polling for minutes, see executor._poll_until) and
@@ -636,7 +644,8 @@ def _streamLiveHop(dex: str, hopType: HopType, chain: str, stable: str, amountUs
     def worker() -> None:
         try:
             result = run_single_hop(
-                dex, hopType, chain, stable, amount_usd=amountUsd, live=True, to_stable_name=toStable, on_stage=on_stage
+                dex, hopType, chain, stable, amount_usd=amountUsd, live=True,
+                to_stable_name=toStable, to_chain_name=toChain, on_stage=on_stage,
             )
             outcome["event"] = {"type": "done", "ok": True, **_testHopResultPayload(result, live=True)}
         except HopValidationError as exc:

@@ -1,7 +1,7 @@
 import { fmt } from "../utils/format";
 import { getExecutionStatus } from "../api/client";
 import type { ExecutionStatus, TestableHopInfo, TestHopResult } from "../types/api";
-import { hopCtxFromButton, hopStablesLabel, executeResultEl, renderHopTestResult, addRecheckBalanceButton, execModal } from "./testHop";
+import { hopCtxFromButton, hopStablesLabel, hopChainLabel, executeResultEl, renderHopTestResult, addRecheckBalanceButton, execModal } from "./testHop";
 import { createStageTracker, errorNoteHtml } from "./StageTracker";
 import { runLiveHopRequest, notifyLiveRunComplete } from "./liveHopRequest";
 
@@ -87,7 +87,7 @@ async function onExecuteAllClick(): Promise<void> {
   }
 
   const rowsHtml = ops.map(o =>
-    `<div class="live-confirm-list-row"><span>${o.ctx.hopType} · ${o.ctx.dex} on ${o.ctx.chain}</span><span>$${fmt(o.amount)}</span></div>`
+    `<div class="live-confirm-list-row"><span>${o.ctx.hopType} · ${o.ctx.dex} on ${hopChainLabel(o.ctx)}</span><span>$${fmt(o.amount)}</span></div>`
   ).join("");
   msgEl.innerHTML = `<div class="live-confirm-box">
     <div class="live-warning">⚠ This will move real funds across ${ops.length} operations, one at a time — no undo</div>
@@ -114,7 +114,7 @@ async function runAllLive(ops: ExecuteAllOp[]): Promise<void> {
   const modalStagesEl = execModal.open(`${ops.length} operations, one at a time`);
 
   const rows = ops.map(o => {
-    const label = `${o.ctx.hopType} · ${o.ctx.dex} on ${o.ctx.chain} (${hopStablesLabel(o.ctx)})`;
+    const label = `${o.ctx.hopType} · ${o.ctx.dex} on ${hopChainLabel(o.ctx)} (${hopStablesLabel(o.ctx)})`;
     const rowEl = document.createElement("div");
     rowEl.className = "exec-batch-row queued";
     rowEl.innerHTML = `<div class="exec-batch-row-label"><span>${label}</span><span class="exec-batch-amount">$${fmt(o.amount)}</span></div><div class="exec-batch-tracker"></div>`;
