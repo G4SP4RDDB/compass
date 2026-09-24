@@ -288,7 +288,11 @@
   }
   .execute-all-btn:hover { background: var(--neg); color: #fff; }
   .execute-all-btn:disabled { opacity: .4; cursor: default; background: transparent; color: var(--muted); border-color: var(--border); }
-  .op-row .op-exec { min-width: 70px; text-align: right; }
+  .op-row .op-exec { text-align: right; }
+  /* Now actually takes effect: .op-row became a grid container above, so
+     this spans the full row width on its own line below the columns,
+     instead of being squeezed in as an 8th column (its previous, silently
+     broken behavior under flex). */
   .op-exec-result { grid-column: 1 / -1; width: 100%; }
   .op-exec-result .hop-test-result { margin: 4px 0 2px 24px; }
   #details dl { margin: 0 0 10px; }
@@ -543,17 +547,24 @@
   #operationsView.active { display: block; }
   .ops-summary { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 16px; font-size: 12px; color: var(--muted); }
   .ops-summary b { color: var(--text); font-size: 16px; display: block; margin-top: 2px; }
+  /* CSS Grid, not flex: flex sizes each row's columns independently from
+     its own content (a short "Deposit" badge vs. a long "On-chain
+     transfer" one), so two rows can end up with different actual column
+     widths even with matching min-width — exactly why the header row
+     drifted out of alignment with the data rows below it. An explicit
+     grid-template-columns, shared by every .op-row (data rows and the
+     .op-row-header alike, since it's the same selector), fixes every row
+     to the same column widths regardless of content. */
   .op-row {
-    display: flex; align-items: center; gap: 12px; padding: 9px 4px 9px 8px;
+    display: grid; grid-template-columns: 108px 1fr 90px 90px 80px 60px 70px;
+    align-items: center; gap: 12px; padding: 9px 4px 9px 8px;
     border-bottom: 1px solid var(--border); border-left: 3px solid transparent; font-size: 12.5px;
   }
-  .op-row .op-type { min-width: 108px; }
-  .op-row .op-route { flex: 1; }
   .op-row .op-route b { font-weight: 600; }
-  .op-row .op-stable { color: var(--muted); min-width: 90px; }
-  .op-row .op-amount { font-weight: 600; min-width: 90px; text-align: right; }
-  .op-row .op-cost { color: var(--muted); min-width: 80px; text-align: right; }
-  .op-row .op-delay { color: var(--muted); min-width: 60px; text-align: right; }
+  .op-row .op-stable { color: var(--muted); }
+  .op-row .op-amount { font-weight: 600; text-align: right; }
+  .op-row .op-cost { color: var(--muted); text-align: right; }
+  .op-row .op-delay { color: var(--muted); text-align: right; }
   /* Column labels above the list (panels/operations.ts) — plain text, not
      interactive, so someone unfamiliar with the interface doesn't have to
      infer what each bare number/column means from position alone. */
