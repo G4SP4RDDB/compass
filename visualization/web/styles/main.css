@@ -1,0 +1,636 @@
+  :root {
+    --bg: #f5f6f8;
+    --panel-bg: #ffffff;
+    --text: #1a1d21;
+    --muted: #6b7280;
+    --border: #dde1e6;
+    --accent: #2563eb;
+    --pos: #2fae5e;
+    --neg: #e05252;
+    --zero: #8b93a1;
+    --chosen: #d97706;
+    /* Couleurs de marque des deux stables modélisées (voir graph.structures.DEXes.Stable) :
+       bleu Circle (USDC) / vert Tether (USDT), utilisées à la fois pour la
+       couleur de l'edge et le badge animé dessus (voir createFlowDots) —
+       même couleur des deux côtés, une seule source de vérité ici. */
+    --usdc: #2775ca;
+    --usdt: #26a17b;
+    /* Une couleur par type d'opération (voir web_view.py:_hopKind) : distingue
+       d'un coup d'œil, dans la liste comme dans les hops détaillés, Withdraw/
+       Deposit (comptabilité interne à un DEX, jamais de mouvement de fonds
+       entre deux parties) d'On-chain transfer/Bridge/Swap (mouvement réel). */
+    --type-withdraw: #c2410c;
+    --type-deposit: #0d9488;
+    --type-transfer: #2563eb;
+    --type-bridge: #d97706;
+    --type-swap: #9333ea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --panel-bg: #1c1f24;
+      --text: #e8eaed;
+      --muted: #9aa0a8;
+      --border: #33383f;
+      --accent: #5b9bff;
+      --pos: #3ecb72;
+      --neg: #ff6b6b;
+      --chosen: #fbbf24;
+      --usdc: #4098e0;
+      --usdt: #2ecc9a;
+      --type-withdraw: #fb923c;
+      --type-deposit: #2dd4bf;
+      --type-transfer: #60a5fa;
+      --type-bridge: #fbbf24;
+      --type-swap: #c084fc;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  body { display: flex; flex-direction: column; }
+
+  header {
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap;
+    background: var(--panel-bg);
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  #stats { font-size: 12px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+  #stats b { color: var(--text); }
+
+  #toolbar {
+    padding: 8px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    background: var(--panel-bg); font-size: 12px;
+  }
+  #toolbar label { display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+  #toolbar input[type="text"] {
+    padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--bg); color: var(--text); font-size: 12px; width: 180px;
+  }
+  .zoom-btn {
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    border-radius: 5px; width: 26px; height: 26px; cursor: pointer; font-size: 14px; line-height: 1;
+  }
+  .zoom-btn:hover { border-color: var(--accent); }
+  #zoomLabel { color: var(--muted); min-width: 42px; text-align: center; }
+
+  #main { flex: 1; display: flex; min-height: 0; }
+  #canvasWrap { flex: 1; position: relative; overflow: hidden; cursor: grab; }
+  #canvasWrap.grabbing { cursor: grabbing; }
+  svg#graphSvg { width: 100%; height: 100%; display: block; }
+
+  #centerMark { fill: var(--border); font-weight: 700; text-anchor: middle; pointer-events: none; opacity: .4; letter-spacing: .08em; }
+
+  .node circle { stroke: rgba(0,0,0,.35); stroke-width: 1; cursor: pointer; transition: opacity .15s; }
+  .node.hidden { display: none; }
+  .node text { font-size: 10.5px; fill: var(--text); pointer-events: none; transition: opacity .15s; }
+  .node .sublabel { font-size: 9px; font-weight: 600; }
+  .node .sublabel.pos { fill: var(--pos); }
+  .node .sublabel.neg { fill: var(--neg); }
+  .node .sublabel.zero { fill: var(--muted); }
+  .node .node-monogram { font-size: 13px; font-weight: 700; letter-spacing: .02em; }
+  .node.selected circle { stroke: var(--accent); stroke-width: 3; }
+  .node.dimmed circle, .node.dimmed text { opacity: .15; }
+
+  /* Nœud "Wallet" (voir walletHubs) — pas un DEX : deux nœuds FIXES
+     (BSC/ARBITRUM), chacun couvrant USDC+USDT, posés près du centre. Un
+     rectangle arrondi plutôt qu'un cercle pour ne jamais les confondre avec
+     un DEX au premier coup d'œil ; pas d'anneau de solde (pas de concept de
+     surplus/déficit pour un wallet). Partage la classe `.node` (donc les
+     règles génériques .selected/.dimmed/.hidden ci-dessus s'appliquent déjà
+     à son <text>) — seules les règles spécifiques à `rect` (au lieu de
+     `circle`) sont redéfinies ici. */
+  .node-wallet rect {
+    stroke: rgba(0,0,0,.35); stroke-width: 1; cursor: pointer; transition: opacity .15s;
+    fill: var(--accent); fill-opacity: .22;
+  }
+  .node-wallet .wallet-icon { font-size: 15px; pointer-events: none; text-anchor: middle; fill: var(--accent); }
+  .node-wallet.selected rect { stroke: var(--accent); stroke-width: 3; }
+  .node-wallet.dimmed rect { opacity: .15; }
+
+  .edge { fill: none; stroke: #8b93a1; pointer-events: none; transition: opacity .15s, stroke-width .15s; }
+  /* Route jamais empruntée par le solveur (voir .edge.chosen ci-dessous) :
+     entièrement masquée plutôt qu'affichée en filigrane, pour que seules les
+     routes réellement utilisées chargent le graphe visuellement. */
+  .edge.hidden { display: none; }
+  .edge.dimmed { opacity: .04 !important; }
+  .edge.highlight { stroke: var(--accent) !important; stroke-width: 2.6 !important; opacity: .95 !important; }
+  /* Trajet réellement choisi par le solveur (voir GRAPH_DATA.journeys) : distinct
+     de .edge.highlight (survol/clic), qui peut se combiner par-dessus. La ligne
+     reste discrète — c'est le flux de points (.flow-dot) qui porte l'attention,
+     façon L2Beat, plutôt qu'un halo permanent sur le trait. */
+  .edge.chosen { stroke: var(--chosen); }
+  .edge.chosen.approximate { stroke-dasharray: 6 3; }
+  .edge.chosen.highlight { stroke: var(--chosen) !important; stroke-width: 3.2 !important; opacity: 1 !important; }
+  /* Stable réellement envoyée sur ce trajet (voir Journey.stable côté Python) :
+     bleu USDC / vert USDT, mêmes couleurs de marque que le badge du .flow-dot
+     ci-dessous, pour lire "quelle stable" d'un coup d'œil sans ouvrir le
+     panneau latéral. Trois classes > .edge.chosen (deux classes) : gagne déjà
+     par spécificité, mais on garde .highlight au-dessus (4 classes) pour que
+     la sélection ne fasse pas disparaître la couleur de la stable. */
+  .edge.chosen.stable-usdc { stroke: var(--usdc); }
+  .edge.chosen.stable-usdt { stroke: var(--usdt); }
+  .edge.chosen.stable-usdc.highlight { stroke: var(--usdc) !important; }
+  .edge.chosen.stable-usdt.highlight { stroke: var(--usdt) !important; }
+  /* Léger feedback visuel au survol de la hitbox élargie (.edge-hit) : sans
+     ça, la zone cliquable (14px) déborde largement du trait visible (souvent
+     <1px) et le tooltip semblerait surgir "de nulle part". */
+  .edge.hover:not(.highlight) { opacity: .9 !important; stroke-width: 2.2 !important; }
+  /* Hitbox invisible, bien plus large que le trait dessiné (.edge) : porte
+     tous les listeners (survol/clic), voir la boucle de création des edges. */
+  .edge-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; }
+  .edge-hit.clickable { cursor: pointer; }
+  .edge-hit.hidden { display: none; }
+  .edge-label { font-size: 8px; fill: var(--muted); pointer-events: none; transition: opacity .15s; }
+  .edge-label.hidden { display: none; }
+  .edge-label.dimmed { opacity: .04 !important; }
+
+  /* Badges animés le long d'une arête "chosen" (voir createFlowDots) : figurent
+     le sens réel du flux, DEX source -> DEX destination, ET la stable
+     transportée (voir Journey.stable) — le vrai logo USDC/USDT (voir
+     visualization/assets/, embarqué une fois dans <defs> et référencé via
+     <use>) plutôt qu'un point neutre. */
+  .flow-dot-badge use { filter: drop-shadow(0 0 1px var(--panel-bg)); }
+  .flow-dots { transition: opacity .15s; pointer-events: none; }
+  .flow-dots.dimmed { opacity: 0 !important; }
+  .flow-dots.hidden { display: none; }
+
+  #sidebar {
+    width: 320px; border-left: 1px solid var(--border); background: var(--panel-bg);
+    padding: 14px; overflow-y: auto; font-size: 12px; flex-shrink: 0;
+  }
+  #sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }
+
+  /* Panel "Wallet" : solde ON-CHAIN RÉEL (pas une estimation, pas un mock)
+     de l'operating wallet en USDC/USDT sur Arbitrum/BSC, voir
+     compass_test/balances.py::list_wallet_balances et GET
+     /api/wallet-balances. Distinct des nodes DEX du graphe (qui restent du
+     déséquilibre saisi à la main, voir connectors.dex_imbalances) :
+     ceci est un WalletNode réel, la seule balance de ce panneau qui n'est
+     JAMAIS mock. */
+  #walletPanel { margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+  #walletPanel .wallet-address {
+    font-size: 10.5px; color: var(--muted); font-family: ui-monospace, monospace;
+    margin-bottom: 8px; word-break: break-all;
+  }
+  .wallet-row { display: flex; align-items: center; justify-content: space-between; padding: 3px 0; }
+  .wallet-row .wallet-label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .wallet-row .wallet-chain-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  .wallet-row .wallet-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .wallet-row .wallet-value.wallet-na { color: var(--muted); font-weight: 400; font-style: italic; }
+  .wallet-total { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); font-weight: 700; }
+  #walletPanel .wallet-error { color: var(--neg); font-size: 11px; margin-top: 6px; }
+
+  .status-note { font-size: 11px; font-style: italic; color: var(--muted); }
+  .status-note.offline { color: var(--neg); }
+  .status-note.saving { color: var(--accent); }
+  .costBar-btn {
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    border-radius: 5px; padding: 5px 10px; cursor: pointer; font-size: 12px; white-space: nowrap;
+  }
+  .costBar-btn:hover { border-color: var(--accent); }
+  .costBar-btn:disabled { opacity: .5; cursor: default; }
+  .mode-toggle { display: flex; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
+  .mode-btn {
+    border: none; border-right: 1px solid var(--border); background: var(--bg); color: var(--text);
+    padding: 5px 10px; cursor: pointer; font-size: 12px; white-space: nowrap;
+  }
+  .mode-btn:last-child { border-right: none; }
+  .mode-btn:hover { background: color-mix(in srgb, var(--accent) 10%, var(--bg)); }
+  .mode-btn.active { background: var(--accent); color: #fff; }
+  .mode-btn:disabled { opacity: .5; cursor: default; }
+  .approx-note {
+    background: color-mix(in srgb, var(--chosen) 12%, transparent); border: 1px solid var(--chosen);
+    border-radius: 6px; padding: 8px 10px; font-size: 11px; line-height: 1.5; margin: 8px 0 14px;
+  }
+  .approx-tag {
+    font-size: 9.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--chosen);
+    border: 1px solid var(--chosen); border-radius: 8px; padding: 0 5px; margin-left: 4px;
+  }
+  #details { border-top: 1px solid var(--border); padding-top: 12px; }
+  #details .placeholder { color: var(--muted); }
+
+  /* "Real balance (live)" vs the hand-set imbalance in a DEX's Details panel
+     (see renderDexDetails/loadDexRealBalance) — kept visually distinct on
+     purpose: the mock figure drives the solver's demo graph
+     (connectors.dex_imbalances), the real one comes straight from that
+     DEX's own API (compass_test/balances.py) and never feeds the solver. */
+  .dex-balance-real { font-weight: 600; }
+  .dex-balance-na { color: var(--muted); font-style: italic; }
+
+  /* Formulaire "Imbalance" du panel Details : ce que l'utilisateur tape ici
+     EST ce que le solveur verra au prochain "Run solver" (voir
+     connectors.dex_imbalances, GET/POST /api/imbalances). */
+  .imb-form { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; font-size: 11.5px; margin: 6px 0 4px; }
+  .imb-form label { color: var(--muted); }
+  .imb-form select, .imb-form input[type="number"] {
+    width: 100%; box-sizing: border-box; padding: 4px 6px; border-radius: 4px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 11.5px;
+  }
+  .imb-actions { display: flex; align-items: center; gap: 8px; margin: 6px 0 10px; }
+  .imb-save-btn {
+    font-size: 11px; padding: 4px 10px; border-radius: 4px; border: 1px solid var(--accent);
+    background: var(--accent); color: #fff; cursor: pointer; font-weight: 600;
+  }
+  .imb-save-btn:disabled { opacity: .5; cursor: default; }
+  .imb-status { font-size: 10.5px; color: var(--muted); }
+  .imb-status.ok { color: var(--pos); }
+  .imb-status.error { color: var(--neg); }
+  .imb-summary { font-size: 11px; color: var(--muted); }
+  .imb-summary b { color: var(--text); }
+  .imb-summary.infeasible { color: var(--neg); }
+  .imb-kind-surplus { color: var(--pos); font-weight: 600; }
+  .imb-kind-deficit { color: var(--neg); font-weight: 600; }
+
+  /* "Execute" : exécution LIVE d'un hop choisi par le solveur, au montant
+     du solveur — même route et mêmes gardes-fous que "Run LIVE" (POST
+     /api/test-hop, voir compass_test/README.md "Safety model"). */
+  .execute-btn {
+    font-size: 10px; padding: 3px 10px; border-radius: 4px; border: 1px solid var(--neg);
+    background: transparent; color: var(--neg); cursor: pointer; font-weight: 700;
+  }
+  .execute-btn:hover { background: var(--neg); color: #fff; }
+  .execute-btn:disabled { opacity: .45; cursor: default; background: transparent; color: var(--muted); border-color: var(--border); }
+
+  /* "Execute All" — runs every executable row in #opsList back-to-back (see
+     onExecuteAllClick/runAllLive), NOT concurrently: the operating wallet
+     has no nonce-locking (compass_test/chain_ops.py), so two on-chain
+     submissions in flight at once from this one wallet can collide. Sits
+     right under the summary strip, hidden until bindExecuteButtons knows
+     how many rows are actually runnable on this server. */
+  .execute-all-btn {
+    display: block; width: 100%; margin: 4px 0 14px; padding: 10px 14px; font-size: 13px;
+    font-weight: 700; border-radius: 6px; border: 1.5px solid var(--neg); background: transparent;
+    color: var(--neg); cursor: pointer;
+  }
+  .execute-all-btn:hover { background: var(--neg); color: #fff; }
+  .execute-all-btn:disabled { opacity: .4; cursor: default; background: transparent; color: var(--muted); border-color: var(--border); }
+  .op-row .op-exec { text-align: right; }
+  /* Now actually takes effect: .op-row became a grid container above, so
+     this spans the full row width on its own line below the columns,
+     instead of being squeezed in as an 8th column (its previous, silently
+     broken behavior under flex). */
+  .op-exec-result { grid-column: 1 / -1; width: 100%; }
+  .op-exec-result .hop-test-result { margin: 4px 0 2px 24px; }
+  #details dl { margin: 0 0 10px; }
+  #details dt { color: var(--muted); margin-top: 6px; }
+  #details dd { margin: 0; font-weight: 600; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+  .chip { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px; font-size: 10.5px; }
+
+  .path-row { border-top: 1px solid var(--border); }
+  .path-row:last-child { border-bottom: 1px solid var(--border); }
+  .path-head { display: flex; align-items: center; gap: 6px; padding: 7px 2px; cursor: pointer; }
+  .path-head:hover { background: var(--bg); }
+  .path-head .chevron { width: 10px; color: var(--muted); transition: transform .15s; flex-shrink: 0; }
+  .path-head.expanded .chevron { transform: rotate(90deg); }
+  .path-head .name { flex: 1; font-weight: 600; cursor: pointer; }
+  .path-head .name:hover { color: var(--accent); text-decoration: underline; }
+  .path-head .cost { color: var(--muted); }
+  .path-hops { padding: 0 2px 10px 18px; display: none; }
+  .path-hops.expanded { display: block; }
+  /* Sous-bloc non-interactif (cheapest/fastest route, "Chosen by the solver"
+     journey) : volontairement distinct de .path-head, qui est re-scanné par
+     querySelectorAll(".path-head") à chaque renderDexDetails et deviendrait
+     toggleable par erreur si on le réutilisait ici. */
+  .route-head { display: flex; align-items: center; gap: 6px; padding: 5px 2px; font-weight: 600; }
+  .route-head .cost { color: var(--muted); font-weight: 400; }
+  .hop { font-size: 10.5px; padding: 3px 0; border-left: 2px solid var(--border); padding-left: 8px; margin-bottom: 2px; color: var(--muted); }
+  .hop b { color: var(--text); font-weight: 500; }
+  .hop .hop-cost { float: right; }
+  .hop .hop-protocol { font-style: italic; }
+  .no-paths { color: var(--muted); padding: 8px 0; }
+
+  /* "Test This Edge" — runs compass_test against the REAL DEX API for this
+     one hop (see hop_runner.run_single_hop / POST /api/test-hop). Dry-run
+     only until "Run LIVE" is deliberately opened AND confirmed — see
+     compass_test/README.md "Safety model". */
+  .hop-test { margin-top: 4px; clear: both; }
+  /* Plain-language summary (amount/time/cost/stablecoin) shown above the
+     Execute button — the compact "type-badge · cost · duration" header
+     line on .hop itself stays terse for scanning a whole list of hops;
+     this spells the same numbers out for the one hop actually about to be
+     executed for real, see panels/routes.ts::hopSummaryHtml. */
+  .hop-summary {
+    background: var(--panel-bg); border: 1px solid var(--border); border-radius: 5px;
+    padding: 5px 8px; margin: 4px 0 6px; font-size: 10.5px;
+  }
+  .hop-summary .test-row { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
+  .hop-summary .test-label { color: var(--muted); }
+  .test-edge-btn {
+    font-size: 10px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--accent);
+    background: transparent; color: var(--accent); cursor: pointer; font-weight: 600;
+  }
+  .test-edge-btn:hover { background: var(--accent); color: #fff; }
+  .test-edge-btn:disabled { opacity: .5; cursor: default; background: transparent; color: var(--muted); border-color: var(--border); }
+  .hop-test-result { margin-top: 5px; font-size: 10.5px; }
+  .hop-test-result .test-row { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
+  .hop-test-result .test-label { color: var(--muted); }
+  .hop-test-result .test-status-ok { color: var(--pos); font-weight: 600; }
+  .hop-test-result .test-status-error, .hop-test-result .test-status-unconfirmed { color: var(--neg); font-weight: 600; }
+  .hop-test-result .test-status-dry_run { color: var(--muted); font-weight: 600; }
+  .hop-test-result .test-note { color: var(--muted); font-style: italic; margin-top: 3px; }
+  .hop-test-result .test-err-pos { color: var(--neg); }
+  .hop-test-result .test-err-neg { color: var(--pos); }
+
+  /* Terminal error message for a LIVE run (runLiveHop / runAllLive) — a
+     one-line summary always visible, the raw exception/error text tucked
+     behind <details> so a long traceback doesn't blow up the row; the
+     stage tracker above it already shows the step-by-step trail up to the
+     point of failure, this only cleans up the final message itself. */
+  .test-status-error.error-box { font-weight: 400; }
+  .test-status-error .error-summary { font-weight: 600; }
+  .test-status-error details { margin-top: 4px; }
+  .test-status-error summary { cursor: pointer; color: var(--muted); font-weight: 400; font-size: 10px; }
+  .test-status-error pre {
+    margin: 4px 0 0; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; font-size: 10px; white-space: pre-wrap; word-break: break-word; max-height: 160px;
+    overflow-y: auto; color: var(--text); font-weight: 400;
+  }
+
+  .run-live-btn {
+    margin-top: 6px; font-size: 10px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--neg);
+    background: transparent; color: var(--neg); cursor: pointer; font-weight: 600;
+  }
+  .run-live-btn:hover { background: var(--neg); color: #fff; }
+  .live-confirm-box {
+    margin-top: 6px; padding: 8px; border: 1px solid var(--neg); border-radius: 6px;
+    background: color-mix(in srgb, var(--neg) 8%, transparent);
+  }
+  .live-confirm-box .live-warning { font-weight: 700; color: var(--neg); margin-bottom: 4px; }
+  .live-confirm-box dl { margin: 4px 0; font-size: 10.5px; }
+  .live-confirm-box input[type="text"] {
+    width: 100%; box-sizing: border-box; padding: 4px 6px; margin-top: 4px; border-radius: 4px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 11px;
+  }
+  .live-confirm-actions { display: flex; gap: 6px; margin-top: 6px; }
+  .live-confirm-actions button { font-size: 10px; padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+  .confirm-run-btn { border: 1px solid var(--neg); background: var(--neg); color: #fff; font-weight: 700; }
+  .confirm-run-btn:disabled { opacity: .4; cursor: default; }
+  .cancel-live-btn { border: 1px solid var(--border); background: transparent; color: var(--muted); }
+
+  /* Batch confirm box (onExecuteAllClick) — same shape/warning language as
+     .live-confirm-box above, plus the ordered list of what "YES" commits
+     to and, when the sum exceeds MAX_USD_PER_RUN, a hard block instead of
+     a warning (that cap is only enforced client-side for a batch — see
+     runAllLive's docstring). */
+  .live-confirm-list { max-height: 160px; overflow-y: auto; margin: 4px 0; font-size: 10.5px; }
+  .live-confirm-list-row { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; border-bottom: 1px dotted var(--border); }
+  .live-confirm-cap-block { color: var(--neg); font-weight: 600; margin-top: 6px; }
+
+  /* One row per operation inside the "Execute All" modal (runAllLive) —
+     label + its own nested stage tracker, so the whole queue is visible
+     up front and fills in top-to-bottom as each hop actually runs one at
+     a time (never two "active" rows at once — see the CSS comment on
+     .execute-all-btn for why). */
+  .exec-batch-row { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .exec-batch-row:last-child { border-bottom: none; }
+  .exec-batch-row-label { font-size: 11px; font-weight: 600; margin-bottom: 4px; display: flex; justify-content: space-between; gap: 8px; }
+  .exec-batch-row-label .exec-batch-amount { color: var(--muted); font-weight: 400; }
+  .exec-batch-row.queued { opacity: .55; }
+  .exec-batch-row.skipped { opacity: .55; }
+  .exec-batch-summary { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 11.5px; font-weight: 600; }
+
+  /* Staged progress for a LIVE run (executor.py's on_stage callback,
+     streamed by POST /api/test-hop — see runLiveHop). Each stage is
+     tagged ON-CHAIN (this wallet's own signed tx) or the venue's own name
+     (its internal processing, off-chain from our side) in a distinct
+     color, on purpose: a deposit landing on-chain and the DEX crediting it
+     internally are two different events with two different failure modes,
+     and collapsing them into one "done" step is exactly what used to hide
+     that. */
+  .exec-stages { margin: 2px 0 8px; display: flex; flex-direction: column; gap: 4px; }
+  .exec-stage { display: flex; align-items: flex-start; gap: 6px; font-size: 10.5px; color: var(--muted); }
+  .exec-stage.done { color: var(--text); }
+  .exec-stage.error { color: var(--neg); }
+  .exec-stage.pending { color: var(--chosen); }
+  .exec-stage-icon { width: 13px; height: 13px; flex-shrink: 0; margin-top: 1px; display: flex; align-items: center; justify-content: center; font-size: 10px; line-height: 1; }
+  .exec-stage.done .exec-stage-icon { color: var(--pos); font-weight: 700; }
+  .exec-stage.error .exec-stage-icon { color: var(--neg); font-weight: 700; }
+  /* "pending": the on-chain leg genuinely finished but the venue's own
+     balance never reflected it within the wait window (executed.status ==
+     "unconfirmed") — deliberately NOT the same green "done" as a real
+     confirmation. Only a live balance change on the venue earns that; see
+     executor.py's poll loop in _run_deposit/_run_withdraw. */
+  .exec-stage.pending .exec-stage-icon { color: var(--chosen); font-weight: 700; }
+  .exec-stage-tag {
+    flex-shrink: 0; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+    padding: 1px 5px; border-radius: 3px; margin-top: .5px;
+  }
+  .exec-stage-tag.onchain { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+  .exec-stage-tag.exchange { background: color-mix(in srgb, var(--chosen) 20%, transparent); color: var(--chosen); }
+  .exec-spinner {
+    width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+    border: 1.5px solid var(--border); border-top-color: var(--accent);
+    animation: exec-spin .7s linear infinite;
+  }
+  @keyframes exec-spin { to { transform: rotate(360deg); } }
+
+  /* Popup shown while/after a LIVE run executes (see runLiveHop) — on top
+     of everything else so the execution state is visible no matter where
+     on the page (or how far scrolled) the Execute/Run LIVE button was.
+     Base rule is `display:none`, NOT `display:flex`: an ID selector beats
+     the browser's own `[hidden] { display:none }` UA rule on specificity
+     alone, so setting `display:flex` unconditionally here used to show the
+     popup on page load (the `hidden` attribute was present but powerless)
+     and made "closing" it (which only toggles `hidden`) do nothing
+     visible — confirmed live 2026-09-14. `:not([hidden])` keeps `hidden`
+     as the actual single source of truth instead of a second, easy-to-
+     desync `.open` class. */
+  #execModalOverlay {
+    display: none;
+    position: fixed; inset: 0; background: rgba(0, 0, 0, .45); z-index: 1000;
+    align-items: center; justify-content: center; padding: 16px;
+  }
+  #execModalOverlay:not([hidden]) { display: flex; }
+  #execModal {
+    width: 100%; max-width: 420px; max-height: 80vh; overflow-y: auto;
+    background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .35);
+  }
+  .exec-modal-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 12px 14px; border-bottom: 1px solid var(--border); font-weight: 700; font-size: 13px;
+  }
+  #execModalClose {
+    border: none; background: transparent; color: var(--muted); font-size: 13px; cursor: pointer;
+    padding: 2px 6px; border-radius: 4px; line-height: 1;
+  }
+  #execModalClose:hover { background: var(--bg); color: var(--text); }
+  #execModalBody { padding: 14px; }
+  #execModalBody .exec-stages { margin: 0 0 4px; }
+  #execModalBody .exec-stage { font-size: 12px; }
+  #execModalBody .exec-hop-label { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+
+  /* Bottom-right pill the popup collapses into on close WHILE a run is
+     still in flight (see hideExecModal) — clicking it reopens the popup on
+     the same still-updating tracker, instead of losing sight of a live run
+     just because the popup got closed. Same base-rule pitfall as the
+     overlay above, so the same `display:none` + `:not([hidden])` shape. */
+  #execMiniIndicator {
+    display: none;
+    position: fixed; right: 16px; bottom: 16px; z-index: 999;
+    align-items: center; gap: 7px; padding: 8px 14px; border-radius: 20px;
+    background: var(--panel-bg); border: 1px solid var(--border); box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
+    font-size: 11.5px; font-weight: 600; cursor: pointer;
+  }
+  #execMiniIndicator:not([hidden]) { display: flex; }
+  #execMiniIndicator:hover { border-color: var(--accent); }
+  #execMiniIndicator.done { color: var(--pos); border-color: var(--pos); }
+  #execMiniIndicator.error { color: var(--neg); border-color: var(--neg); }
+  #execMiniIndicator.pending { color: var(--chosen); border-color: var(--chosen); }
+
+  /* "Check again" for an unconfirmed deposit/withdraw — see
+     checkDexBalanceAgain, reusing the same GET /api/dex-balances/<name>
+     the DEX Details panel already uses, so re-checking doesn't require
+     re-running the whole hop. */
+  .exec-recheck-btn {
+    margin-top: 6px; font-size: 10px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--chosen);
+    background: transparent; color: var(--chosen); cursor: pointer; font-weight: 600;
+  }
+  .exec-recheck-btn:hover { background: var(--chosen); color: #fff; }
+  .exec-recheck-result { margin-top: 4px; font-size: 10.5px; color: var(--muted); }
+
+  /* Une couleur par type d'opération (voir --type-* dans :root et
+     web_view.py:_hopKind) : le badge ET le liseré de la ligne portent la
+     même couleur, pour repérer un type d'un coup d'œil sans lire le texte. */
+  .type-tag {
+    display: inline-block; font-size: 9px; text-transform: uppercase; letter-spacing: .02em;
+    border: 1px solid currentColor; border-radius: 8px; padding: 1px 6px; white-space: nowrap;
+  }
+  .type-tag.type-withdraw { color: var(--type-withdraw); }
+  .type-tag.type-deposit { color: var(--type-deposit); }
+  .type-tag.type-on-chain-transfer { color: var(--type-transfer); }
+  .type-tag.type-bridge { color: var(--type-bridge); }
+  .type-tag.type-swap { color: var(--type-swap); }
+  .hop.type-withdraw, .op-row.type-withdraw { border-left-color: var(--type-withdraw); }
+  .hop.type-deposit, .op-row.type-deposit { border-left-color: var(--type-deposit); }
+  .hop.type-on-chain-transfer, .op-row.type-on-chain-transfer { border-left-color: var(--type-transfer); }
+  .hop.type-bridge, .op-row.type-bridge { border-left-color: var(--type-bridge); }
+  .hop.type-swap, .op-row.type-swap { border-left-color: var(--type-swap); }
+
+  .tabbar { display: flex; gap: 4px; }
+  .tab-btn {
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+  }
+  .tab-btn:hover { border-color: var(--accent); color: var(--text); }
+  .tab-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  #exploreView { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  #exploreView.hidden { display: none; }
+
+  #operationsView { flex: 1; display: none; overflow-y: auto; padding: 18px 24px; }
+  #operationsView.active { display: block; }
+  .ops-summary { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 16px; font-size: 12px; color: var(--muted); }
+  .ops-summary b { color: var(--text); font-size: 16px; display: block; margin-top: 2px; }
+  /* CSS Grid, not flex: flex sizes each row's columns independently from
+     its own content (a short "Deposit" badge vs. a long "On-chain
+     transfer" one), so two rows can end up with different actual column
+     widths even with matching min-width — exactly why the header row
+     drifted out of alignment with the data rows below it. An explicit
+     grid-template-columns, shared by every .op-row (data rows and the
+     .op-row-header alike, since it's the same selector), fixes every row
+     to the same column widths regardless of content. */
+  .op-row {
+    display: grid; grid-template-columns: 108px 1fr 90px 90px 80px 60px 70px;
+    align-items: center; gap: 12px; padding: 9px 4px 9px 8px;
+    border-bottom: 1px solid var(--border); border-left: 3px solid transparent; font-size: 12.5px;
+  }
+  .op-row .op-route b { font-weight: 600; }
+  .op-row .op-stable { color: var(--muted); }
+  .op-row .op-amount { font-weight: 600; text-align: right; }
+  .op-row .op-cost { color: var(--muted); text-align: right; }
+  .op-row .op-delay { color: var(--muted); text-align: right; }
+  /* Column labels above the list (panels/operations.ts) — plain text, not
+     interactive, so someone unfamiliar with the interface doesn't have to
+     infer what each bare number/column means from position alone. */
+  .op-row.op-row-header {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+    color: var(--muted); border-bottom: 1px solid var(--text); padding-top: 0; padding-bottom: 6px;
+  }
+  .op-row.op-row-header .op-amount,
+  .op-row.op-row-header .op-cost,
+  .op-row.op-row-header .op-delay { font-weight: 700; }
+  .ops-empty { color: var(--muted); padding: 40px 0; text-align: center; max-width: 420px; margin: 0 auto; }
+
+  #configView { flex: 1; display: none; overflow-y: auto; padding: 18px 24px; }
+  #configView.active { display: block; }
+  #testResultsView { flex: 1; display: none; overflow-y: auto; padding: 18px 24px; }
+  #testResultsView.active { display: block; }
+  .config-hint { color: var(--muted); font-size: 12px; max-width: 640px; margin: 0 0 16px; line-height: 1.5; }
+  .config-table { border-collapse: collapse; width: 100%; max-width: 860px; font-size: 12.5px; }
+  .config-table th {
+    text-align: right; font-weight: 600; color: var(--muted); font-size: 11px;
+    text-transform: uppercase; letter-spacing: .03em; padding: 0 6px 8px; border-bottom: 1px solid var(--border);
+  }
+  .config-table th:first-child, .config-table td:first-child,
+  .config-table th:nth-child(2), .config-table td:nth-child(2) { text-align: left; }
+  .config-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); }
+  .config-table td.cfg-name { font-weight: 600; }
+  .config-table td.cfg-chain { color: var(--muted); }
+  .config-table input {
+    width: 90px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--bg); color: var(--text); font-size: 12.5px; text-align: right;
+  }
+  .config-table input:focus { outline: none; border-color: var(--accent); }
+  /* Délai configuré supplanté par une mesure compass_test (voir
+     costing.computeDelay) : l'input reste éditable mais visiblement hors
+     circuit, la mesure effective s'affiche juste dessous. */
+  .config-table input.cfg-overridden { opacity: .45; text-decoration: line-through; }
+  .config-table td.cfg-delay { white-space: nowrap; }
+  .cfg-measured { font-size: 10.5px; color: var(--muted); margin-top: 2px; text-align: right; }
+  .cfg-measured-active { color: var(--pos); font-weight: 600; }
+  .cfg-measured-lown { color: var(--neg); }
+  .config-actions { display: flex; align-items: center; gap: 10px; margin: 18px 0 8px; }
+  .config-status { font-size: 11.5px; color: var(--muted); }
+  .config-status-ok { color: var(--pos); }
+  .config-status-error, .config-status-offline { color: var(--neg); }
+
+  /* "Test Results" tab : compass_test/ exécute pour de vrai les hops Withdraw/
+     Deposit choisis par le solveur (voir compass_test/README.md) et compare
+     coût/délai réel vs estimé. Lecture seule ici — aucun run (dry-run ou
+     live) n'est déclenchable depuis cette page, voir compass_test/README.md
+     "Safety model" : seul le CLI peut exécuter, cette page ne fait que lire
+     les rapports JSON déjà écrits (GET /api/test-runs). */
+  .results-hint { color: var(--muted); font-size: 12px; max-width: 720px; margin: 0 0 16px; line-height: 1.5; }
+  .results-runs { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .results-runs select {
+    padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--panel-bg); color: var(--text); font-size: 12.5px;
+  }
+  .results-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: .03em; }
+  .results-badge-live { background: color-mix(in srgb, var(--neg) 18%, transparent); color: var(--neg); }
+  .results-badge-dry { background: color-mix(in srgb, var(--muted) 20%, transparent); color: var(--muted); }
+  .results-unsupported { font-size: 11.5px; color: var(--muted); margin-bottom: 14px; }
+  .results-journey { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 14px; overflow: hidden; }
+  .results-journey-head {
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--panel-bg);
+    font-size: 13px; font-weight: 600; border-bottom: 1px solid var(--border);
+  }
+  .results-journey-head .muted { font-weight: 400; color: var(--muted); font-size: 11.5px; }
+  .results-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  .results-table th {
+    text-align: right; font-weight: 600; color: var(--muted); font-size: 11px;
+    text-transform: uppercase; letter-spacing: .03em; padding: 6px 10px; border-bottom: 1px solid var(--border);
+  }
+  .results-table th:first-child, .results-table th:nth-child(2),
+  .results-table td:first-child, .results-table td:nth-child(2) { text-align: left; }
+  .results-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: right; }
+  .results-table tr:last-child td { border-bottom: none; }
+  .results-err-pos { color: var(--neg); }   /* actual worse than estimated */
+  .results-err-neg { color: var(--pos); }   /* actual better than estimated */
+  .results-err-na { color: var(--muted); }
+  .results-status-error, .results-status-unconfirmed { color: var(--neg); font-weight: 600; }
+  .results-empty { color: var(--muted); font-size: 13px; }
+
+  #tooltip {
+    position: fixed; pointer-events: none; background: var(--panel-bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; font-size: 11px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.15); display: none; z-index: 10; max-width: 260px;
+  }

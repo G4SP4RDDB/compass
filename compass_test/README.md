@@ -7,11 +7,18 @@ compares the REAL gas paid and REAL elapsed time against that exact edge's
 `Fee(e)`/`Time(e)` estimate (`src/graph/costing.py`). Results feed the
 "Test Results" tab in the graph UI.
 
-Scope: **Withdraw, Deposit and Swap**, on **BSC and Arbitrum**. Swap is a
+Scope: **Withdraw, Deposit, Swap and Bridge**, on **BSC and Arbitrum**
+(plus **Solana** as the Bridge leg's destination, see below). Swap is a
 same-chain USDC <-> USDT conversion executed through **CoW Swap**
-(`runners/cowswap.py`, `connectors/cowswap.py`) — see "Swap hop" below. No
-Bridge — a journey that touches one is marked out of scope wholesale
-(`plan_loader.py`), never partially executed.
+(`runners/cowswap.py`, `connectors/cowswap.py`) — see "Swap hop" below.
+Bridge is instrumented for both protocols `graph.structures.bridges` models:
+Aden's own internal ledger (USDT, BSC<->Arbitrum, `runners/aden.py`) and
+Circle's CCTP (USDC, ARBITRUM<->SOLANA — the withdraw pipeline's own exit
+route, `connectors/cctp.py`, `cctp_runner.py`), picked automatically by
+`hop_runner.py`/`plan_loader.py` from `availableBridgeProtocols`. A journey
+whose Bridge leg falls outside what either protocol's connector actually
+covers is still marked out of scope (`plan_loader.py`), never partially
+executed.
 
 ## Imbalances are set by hand — and "Execute" runs the plan
 
@@ -291,6 +298,36 @@ The in-memory graph behind the UI picks the new values up at the next build
 measurement overshoots the real credit time — noticeable next to a ~3s
 Arbitrum hop, now that those measurements drive `Time(e)`.
 
+## Metrics dashboard (optional, dev-only)
+
+The "Rebalancings Tracker" page (`/metrics` on the graph viewer server)
+charts cost/delay history across runs. It reads from a local TimescaleDB
+container, not the JSON reports directly — those files under `reports/`
+stay the durable source of truth either way. If the container isn't
+running, that one page shows a "Metrics unavailable" banner; nothing else
+(the graph viewer, report saving, live execution) is affected — see
+`reporter.py`'s best-effort write, which only warns on failure.
+
+To bring it up:
+
+```bash
+docker compose up -d          # starts compass_timescaledb on localhost:5433
+                               # (see docker-compose.yml — 5433 to avoid
+                               # clashing with any local Postgres on 5432)
+```
+
+The schema (`sql/schema.sql`) applies automatically on the container's
+first boot. To populate it from reports already on disk (not needed for a
+fresh setup going forward — `reporter.py` writes new runs to it live):
+
+```bash
+python -m compass_test.scripts.backfill_metrics_db
+```
+
+Connection string defaults to
+`postgresql://compass:compass_dev_only@localhost:5433/compass_metrics`
+(`config.py`'s `TIMESCALE_DB_URL`, overridable via the same-named env var).
+
 ## Usage
 
 ```bash
@@ -350,6 +387,20 @@ python -m compass_test.cli run-hop --hop swap --chain BSC --stable USDT --to-sta
 
 ## Connector status
 
+**Every DEX in the active registry (`src/graph/structures/dex_registry.py`)
+now has both a Withdraw and a Deposit implementation** — Aden, Aster,
+Extended, Hyperliquid, Lighter, MEXC, Ondo Perps. "Implemented" and
+"exercised against a real live transaction" are still two different things
+per-leg below — several rows are code-complete but only smoke-tested
+(`check-auth`) or verified up to (not including) the final submit call, see
+each row's own notes and "Verify before your first live run" further down.
+dYdX and Gate (Perp DEX) are commented OUT of the registry entirely
+(`dex_registry.py`), not present in the live graph at all — not a gap in
+"every DEX," since they aren't one of the DEXes the solver ever routes
+through today. dYdX's own reason stays below for when it's reconsidered:
+a real withdraw is three hops and only the first has working vendor SDK
+support.
+
 | DEX | Withdraw | Deposit | Notes |
 |---|---|---|---|
 | MEXC | ✅ | ✅ | Standard REST+HMAC, verified against MEXC's public docs (2026-09-04). Smoke-tested live via `check-auth` against the real account — works. |
@@ -357,9 +408,9 @@ python -m compass_test.cli run-hop --hop swap --chain BSC --stable USDT --to-sta
 | Ondo Perps | ✅ (confirmed live) | ✅ (confirmed live) | The earlier "no documented withdraw, deposit needs a Bearer JWT" verdict was based on the "Builder Integration Guide" page alone; the separate `docs.ondoperps.xyz/api-reference/wallet/*` pages document both `POST /v1/withdraw` and `POST /v1/provision_address` against the same `ONDO_API_KEY`/`ONDO_API_SECRET` pair `balances.py::_ondo` already uses (ONDO-KEY-ID/ONDO-TIMESTAMP/ONDO-SIGN, not the docs' bare `X-API-KEY-ID` name). **Deposit confirmed live 2026-09-07**: a real $1.00 Arbitrum-USDC transfer to a freshly `provision_address`'d address, credited (`poll_balance_usd` $2.12→$3.12), tx `0x822f9ece4759e02655f9cd5e3a21fa524d13e0d491e5f980f185d544aa668b9e`. Arbitrum isn't in any api-reference page's documented `network` enum (only `ethereum`/`avalanche`/`solana` are) but works — this account's deposit addresses turn out to be shared across all three EVM networks Ondo watches, not per-network vaults. **Withdraw confirmed live 2026-09-07** ($1.50, `externalId f12fbd50...`) after fixing a real bug hit along the way: the first attempt 400'd `withdrawal_address_not_found` for this account's own wallet address even though it WAS in the address book — the book stores it lowercase, `wallet.address` is EIP-55 checksummed, and Ondo's lookup doesn't normalize case before comparing (`runners/ondo.py::_address_book_entry` now looks it up case-insensitively and sends back whatever string is actually on file). `executor.py`'s before/after on-chain balance poll (not just the REST "pending" response) confirmed the wallet's real balance rose by the full $1.50 — `actualCostUsd: 0.0`, i.e. `withdrawalFeeUSD`'s reported "$1" was NOT actually deducted this time, worth re-checking on a larger withdrawal. See `runners/ondo.py` docstring for the full trail. |
 | Aden | ✅ **confirmed live** (2026-09-07) | ✅ **confirmed live** (2026-09-07) | **BSC only.** Reverse-engineered live 2026-09-07 by capturing the real web app's own network + wallet-signing traffic (see `runners/aden.py` docstring) — withdraw/login are on a completely separate host pair (`perps.aden.io` / `brokerapi.gateperps.com`) from the HMAC-keyed `api.aden.io` `balances.py::_aden` already uses. Login is fully headless (`_login()` does a `personal_sign` over Aden's challenge and mints its own `perp_evm_access_token`). Deposit: a plain ERC-20 transfer to Aden's own "Deposit" screen address — **confirmed live: a real deposit landed and was credited.** Withdraw: **confirmed live** — a real $10.50 BSC withdraw, `$10.30` received ($0.20 fee, matching config), real on-chain balance increase verified. Getting there took a real HAR capture of a successful browser withdrawal to find two independent bugs that had been masking each other behind a generic `P_FOMOX_IN_INTERNAL_ERROR` 500: (1) `x-perp-broker-main-uid` was sent as the wrong uid (`perp_evm_uid` instead of `perp_main_uid` — two separate fields this connector had conflated), and (2) the `Authorization: Bearer <general access_token>` header, wrongly removed in an earlier fix attempt that reasoned from the HAR alone (which doesn't show browser session cookies) — both had to be fixed together, since either one alone still 401'd. Nine other single-field guesses (casing, amount formatting, explicit nonce, extra headers) were tried and ruled out before the real capture settled it — see `runners/aden.py`'s docstring for the full trail. `_check_min_withdraw` (a separate, earlier-fixed bug: the real minimum is $10.20 BSC / $10.50 Arbitrum) remains in place. |
 | Gate (Perp DEX) | ❌ | ❌ | Excluded for this v1 by explicit request. |
-| Extended | ✅ (untested live — real reads/quote/signature confirmed, final submit not attempted, see notes) | ❌ | Checked directly against `api.docs.extended.exchange` and the real `x10-python-trading-starknet` PyPI package (2026-09-06) — Extended is StarkEx-derived, so every write (including withdraw) needs a STARK-curve signature, not the plain API key reads use. Withdraw is a 4-step Rhino.fi bridge flow to Arbitrum, documented on Extended's own side (`GET /user/bridge/config` → `GET /user/bridge/quote` → `POST /user/bridge/quote` commit → `POST /user/withdrawal`, STARK-signed); the signature itself uses `fast_stark_crypto`, the same Rust-backed library Extended's own SDK calls, run in a **dedicated Python 3.9 venv** (`runners/extended_signers/`) since it has no Python 3.14 wheel and refuses to build for one at all — confirmed by trying, not assumed. Verified live: the derived public key from `EXTENDED_STARK_PRIVATE_KEY` matches this account's own `l2Key` from a real `GET /user/account/info` call exactly, and a real `GET /user/bridge/quote` + a real signed settlement object were both produced successfully (fee: $0.01 on a $5 test quote). The final `POST /user/withdrawal` was deliberately not called — this account's real balance ($0.44) is below any sensible test amount. **Deposit not implemented**: its last step calls Rhino.fi's own `depositWithId` contract, whose ABI isn't documented on Extended's side. |
+| Extended | ✅ (untested live — real reads/quote/signature confirmed, final submit not attempted, see notes) | ✅ (implemented, untested live) | Checked directly against `api.docs.extended.exchange` and the real `x10-python-trading-starknet` PyPI package (2026-09-06) — Extended is StarkEx-derived, so every write (including withdraw) needs a STARK-curve signature, not the plain API key reads use. Withdraw is a 4-step Rhino.fi bridge flow to Arbitrum, documented on Extended's own side (`GET /user/bridge/config` → `GET /user/bridge/quote` → `POST /user/bridge/quote` commit → `POST /user/withdrawal`, STARK-signed); the signature itself uses `fast_stark_crypto`, the same Rust-backed library Extended's own SDK calls, run in a **dedicated Python 3.9 venv** (`runners/extended_signers/`) since it has no Python 3.14 wheel and refuses to build for one at all — confirmed by trying, not assumed. Verified live: the derived public key from `EXTENDED_STARK_PRIVATE_KEY` matches this account's own `l2Key` from a real `GET /user/account/info` call exactly, and a real `GET /user/bridge/quote` + a real signed settlement object were both produced successfully (fee: $0.01 on a $5 test quote). The final `POST /user/withdrawal` was deliberately not called — this account's real balance ($0.44) is below any sensible test amount. **Deposit is now implemented** (`build_deposit_tx`, same Rhino.fi bridge as the withdraw leg — `GET /user/bridge/config`/`quote`, committed via `POST /user/bridge/quote`, then `depositWithId` on the bridge contract, ABI confirmed against Rhino.fi's own reference docs, approve-first if allowance is short) — this row and `runners/registry.py`'s own comment (which still said "build_deposit_tx raises") were out of sync until this update; neither leg's final on-chain call has been run against a real amount yet. |
 | dYdX | ❌ | ❌ | Checked directly against `docs.dydx.xyz` and the real `dydx-v4-client` PyPI package (2026-09-06) — a withdraw here is THREE hops, not one. Hop 1 (subaccount → your own dYdX main account) is solid: `NodeClient.withdraw()` really does sign+broadcast a `MsgWithdrawFromSubaccount`. Hop 2 (dYdX main account → Noble, IBC) has no working vendor implementation — the SDK's own `NobleClient.send_token_ibc()` is unfinished as published (computes `coin = token.coin()` and the function just ends, no message, no return). Hop 3 (Noble → Arbitrum, Circle's CCTP `MsgDepositForBurn`) isn't in the SDK at all. Hand-rolling hops 2/3 means an unverified CCTP burn call with no reference implementation — get the destination-domain/recipient-padding wrong and the USDC burns with nothing minting on the other end, irreversibly. The real alternative, Skip Go (dYdX's own documented bridge partner, real public API at `api.skip.build`, confirmed reachable), returns pre-built messages for the whole route instead — but needs a new Cosmos mnemonic credential and real protobuf tx signing against two chains, decided against building for now. **Balance reading works** (`balances.py`), no signing needed. |
-| Lighter | ✅ (untested live) | ❌ | Withdraw only, by explicit instruction — a "fast withdraw" (L2 transfer to a pool account, destination address riding in the memo), signed via the same compiled Go binary `lighter-sdk` vendors internally (see `runners/lighter_signers/README.md`). Deposit and the "secure" on-chain withdrawal path were not built. |
+| Lighter | ✅ (untested live) | ✅ (implemented, untested live) | Withdraw is a "fast withdraw" (L2 transfer to a pool account, destination address riding in the memo), signed via the same compiled Go binary `lighter-sdk` vendors internally (see `runners/lighter_signers/README.md`). Deposit is a "fast deposit" via Circle's CCTP bridge-intent-address flow (`apidocs.lighter.xyz` "CCTP Method", chosen over Lighter's other two documented deposit paths — see `runners/lighter.py`'s own docstring), no auth needed for the CCTP leg itself; $5.00 minimum (the CCTP path's own floor). This is a SEPARATE CCTP integration from the Arbitrum->Solana withdraw pipeline's (`connectors/cctp.py`) — same protocol, different destination/purpose, not shared code. The "secure" (non-fast) on-chain withdrawal path was not built. |
 | **CoW Swap** (Swap hop, USDC<->USDT on BSC + Arbitrum) | n/a | n/a | Swap only — see "Swap hop" above. Quote/sign/submit/cancel all **confirmed against the live orderbook 2026-09-10** with this wallet (unfillable test order accepted then cancelled, nothing executed); dry runs return real quotes on both chains. **A real filled swap has not been run yet** — first live test should be `run-hop --hop swap --chain ARBITRUM --stable USDC --to-stable USDT --amount 1 --live` (USDC is already approved to the vault relayer there, so no approve tx), then the BSC direction (needs one approve tx first, ~$0.002 gas). |
 | Hyperliquid | ✅ (untested live) | ✅ (untested live) | Both documented directly (`hyperliquid.gitbook.io`, fetched 2026-09-06) — no reverse-engineering needed, unlike Aster. Deposit is a plain USDC transfer to Hyperliquid's own fixed Arbitrum bridge contract (`0x2Df1c51e09aecf9cacb7bc98cb1742757f163dF7`, verified against `github.com/hyperliquid-dex/contracts/Bridge2.sol`); **credited to whichever address sends it** (no `forAddress` override like Aster's vault), and **below the $5 minimum is lost, not credited** — both enforced in `build_deposit_tx` before broadcasting. Withdraw is a single EIP-712 `"withdraw3"` user-signed action (`for-developers/api/exchange-endpoint.md`) submitted straight to `/exchange` — no separate on-chain tx. Neither leg has been exercised live: `check-auth` only proves the read side works, not that a real bridge deposit lands or a real withdraw clears. The signer (and deposit sender) is required to BE the account itself (`HYPERLIQUID_WALLET_ADDRESS`) — `runners/hyperliquid.py` refuses outright if the configured operating wallet is any other address, since Hyperliquid's delegated API/agent credentials (`HYPERLIQUID_API_KEY`/`HYPERLIQUID_API_ADDRESS`) are a trading-only key, the same situation as Aster's `ASTER_SIGNER`. |
 

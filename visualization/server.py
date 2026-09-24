@@ -62,11 +62,13 @@ serveur ET un `confirm: "YES"` dans le corps de la requête. Voir cette route
 plus bas pour le détail des trois gardes-fous, et
 compass_test/README.md "Safety model".
 
-Lancement : python -m visualization.server
+Lancement : python -m visualization.server [--mode test|prod] (défaut test —
+voir main() et GET /api/execution-status pour ce que "prod" change côté UI).
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import queue
 import threading
@@ -116,6 +118,18 @@ GRAPH_PNG_PATH = ROOT / "graph.png"
 OPERATIONS_TXT_PATH = ROOT / "operations.txt"
 
 app = Flask(__name__)
+
+# Set from --mode by main() before app.run() starts (see bottom of this
+# file) — read at request time by GET /api/execution-status, which the
+# frontend already fetches on load to gate the "Execute" button (see
+# graph_template.html's getExecutionStatus/bindTestEdgeButtons). "test"
+# (the default) keeps today's behavior: both "Test This Edge" (a small
+# dry/live probe, independent of the solver's plan) and "Execute" (the
+# solver's own chosen hop, at its own amount) are shown. "prod" hides
+# "Test This Edge" — an operator running the solved plan doesn't need a
+# separate exploratory probe button cluttering every hop, only the one
+# button that actually runs the plan.
+UI_MODE = "test"
 
 # Construit et résout le graphe une seule fois au démarrage du process, à
 # partir de connectors/dex_imbalances.json (voir main.buildAndSolveGraph) ;
@@ -317,7 +331,10 @@ def getExecutionStatus():
     de savoir AVANT de proposer une exécution live : le serveur autorise-t-il
     le live (COMPASS_TEST_ALLOW_LIVE=1 + wallet configuré, même test que
     POST /api/test-hop), quelle adresse va recevoir/signer, et les caps $
-    que executor.run_hop appliquera de toute façon."""
+    que executor.run_hop appliquera de toute façon. `uiMode` (--mode au
+    lancement, voir main()) dit en plus au frontend si le bouton "Test This
+    Edge" doit rester affiché ("test", défaut) ou disparaître ("prod") —
+    voir bindTestEdgeButtons côté JS."""
     try:
         walletAddress = OperatingWallet(known_address=test_config.OPERATING_WALLET_ADDRESS).address
     except Exception:
@@ -328,6 +345,7 @@ def getExecutionStatus():
             "walletAddress": walletAddress,
             "maxUsdPerHop": test_config.MAX_USD_PER_HOP,
             "maxUsdPerRun": test_config.MAX_USD_PER_RUN,
+            "uiMode": UI_MODE,
         }
     )
 
@@ -641,6 +659,19 @@ def _streamLiveHop(dex: str, hopType: HopType, chain: str, stable: str, amountUs
 
 
 def main() -> None:
+    global UI_MODE
+    parser = argparse.ArgumentParser(description="Compass graph UI server (python -m visualization.server)")
+    parser.add_argument(
+        "--mode",
+        choices=["test", "prod"],
+        default="test",
+        help='"test" (default): keep the "Test This Edge" dry/live probe button on every hop, alongside '
+        '"Execute". "prod": hide "Test This Edge" everywhere — only "Execute" (runs the solver\'s own '
+        "chosen plan) stays, for a simpler UI aimed at an operator rather than someone debugging a route.",
+    )
+    args = parser.parse_args()
+    UI_MODE = args.mode
+
     # threaded=True: a live test-hop request can block for minutes (polling
     # for a withdrawal/deposit to actually land, see executor.py's
     # POLL_TIMEOUT_SECONDS) — single-threaded would freeze every other tab

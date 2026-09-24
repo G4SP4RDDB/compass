@@ -5,7 +5,7 @@ from connectors.gas import GasFeeService
 from graph import costing
 from graph.edge import Edge, EdgeType
 from graph.node import DepositNode, Node, NodeType, SourceNode, WalletDeficitNode, WalletNode, WithdrawNode
-from graph.structures.bridges import availableBridgeProtocols
+from graph.structures.bridges import BRIDGE_PROTOCOL_DEX_NAME, availableBridgeProtocols
 from graph.structures.DEXes import DEX, Chain, Stable
 from graph.structures.swap import SwapVenue
 
@@ -44,7 +44,7 @@ class Graph:
         self._addWalletDeficitNodes(walletDeficitUsd)
         self._linkWithdrawalsAndDeposits(dexList)
         self._linkWalletPayouts()
-        self._linkBridges()
+        self._linkBridges(dexList)
         self.computeAllCosts()
         self.computeAllDelays()
 
@@ -178,8 +178,12 @@ class Graph:
         )
         self.edgeList.append(Edge(settlementWallet, walletDeficitNode))
 
-    def _linkBridges(self) -> None:
+    def _linkBridges(self, dexList: list[DEX]) -> None:
         walletNodes = [cast(WalletNode, n) for n in self.nodeList if n.type == NodeType.Wallet]
+        # For BRIDGE_PROTOCOL_DEX_NAME lookups below — the SAME DEX objects
+        # (config-tab overrides included) already used for this DEX's own
+        # Withdraw/Deposit edges, not a freshly-built default one.
+        dexByName = {dex.name: dex for dex in dexList}
 
         # Un bridge transporte le même actif d'une chain à l'autre, il ne le
         # convertit jamais : arête directe WalletNode -> WalletNode entre la
@@ -201,7 +205,15 @@ class Graph:
                 if walletA.stable != walletB.stable or walletA.chain == walletB.chain:
                     continue
                 for protocol in availableBridgeProtocols(walletA.chain, walletB.chain, walletA.stable):
-                    self.edgeList.append(Edge(walletA, walletB, type=EdgeType.Bridge, bridgeProtocol=protocol))
+                    # None when the protocol has no real DEX behind it (CCTP)
+                    # OR that DEX isn't actually in dexList (e.g. commented
+                    # out of the registry while _ADEN_BRIDGE_CHAINS still
+                    # allows the route) — costing.computeBridgeDelay falls
+                    # back to its flat per-protocol estimate in that case.
+                    bridgeDex = dexByName.get(BRIDGE_PROTOCOL_DEX_NAME.get(protocol))
+                    self.edgeList.append(
+                        Edge(walletA, walletB, type=EdgeType.Bridge, bridgeProtocol=protocol, bridgeDex=bridgeDex)
+                    )
 
         self._linkSwaps(walletNodes)
 

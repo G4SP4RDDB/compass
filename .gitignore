@@ -9,3 +9,9 @@ __pycache__/
 # Real test-run reports (wallet addresses, amounts, tx hashes) — local
 # evidence for the "Test Results" tab, not meant to be committed.
 compass_test/reports/*.json
+
+# TS toolchain for visualization/web/graph_template.html (see build.mjs) —
+# graph_template.html itself IS committed (generated output, same convention
+# as graph.html), but its inputs' tooling artifacts are not.
+visualization/web/node_modules/
+visualization/web/.dist-ts/

@@ -10,10 +10,16 @@ from graph.structures.bridges import BridgeProtocol, bridgeFeeUsd
 from graph.structures.DEXes import MeasuredDelay
 from graph.urgency import TimeWeightParams, computeTimeWeight
 
-# Pas de simulation réelle du bridge interne d'Aden (voir BridgeProtocol,
-# GasFeeService.get_bridge_gas_cost_usd) : ordre de grandeur délibérément
-# conservateur plutôt qu'un 0.0 qui biaiserait le solveur en sa faveur alors
-# qu'on ne connaît pas sa vitesse réelle -- à affiner avec de vraies données.
+# Fallback UNIQUEMENT si Aden n'est pas dans le dexList du graphe (retiré du
+# registre, voir dex_registry.py, alors que _ADEN_BRIDGE_CHAINS autoriserait
+# quand même la route) — sinon computeBridgeDelay lit directement le délai
+# RÉEL d'Aden : son propre depositDelaySecondsByChain sur la chain de départ
+# + son propre withdrawDelaySecondsByChain sur la chain d'arrivée (voir
+# Edge.bridgeDex, Graph._linkBridges) — exactement ce qu'un bridge interne
+# EST, un dépôt suivi d'un retrait sur le même DEX, plutôt qu'un forfait
+# 20 min déconnecté de toute config réelle (l'ancienne valeur ici, jamais
+# mesurée, gardée un temps "au cas où ce serait plus juste qu'un 0.0" avant
+# que la vraie décomposition dépôt+retrait ne remplace ce raisonnement).
 ADEN_INTERNAL_BRIDGE_DELAY_SECONDS = 20 * 60
 
 # CCTP V1 (Standard Transfer) attend la finalité de la chain SOURCE avant que
@@ -278,4 +284,28 @@ def computeConfiguredDelay(edge: Edge) -> float:
 
 def computeBridgeDelay(edge: Edge) -> float:
     assert edge.bridgeProtocol is not None
+    if edge.bridgeDex is not None:
+        # A bridge through a real DEX's own ledger (ADEN_INTERNAL today,
+        # see graph.structures.bridges.BRIDGE_PROTOCOL_DEX_NAME) IS a
+        # deposit into that DEX on the source chain followed by a withdraw
+        # from it on the destination chain (see Graph._linkBridges) — its
+        # delay is exactly that DEX's own configured delay for each leg,
+        # summed, not a separate bridge-specific guess. Configured only
+        # (dex.*DelaySecondsByChain), not the measured-delay override a
+        # plain Withdraw/Deposit edge would prefer (measuredDelay above
+        # doesn't handle Bridge edges at all) — no live compass_test runs
+        # measure a bridge leg in isolation today to feed that back with.
+        #
+        # .get() rather than direct indexing: availableBridgeProtocols'
+        # _ADEN_BRIDGE_CHAINS is a fixed {BSC, ARBITRUM} pair, independent
+        # of whatever chains this SPECIFIC bridgeDex object actually
+        # declared (its own dex.chains, e.g. a test double registered with
+        # only one of the two) — falls back to the flat estimate rather
+        # than KeyError if this particular DEX object doesn't cover one of
+        # them, same reasoning as bridgeDex being None entirely below.
+        fromChain, toChain = cast(WalletNode, edge.u).chain, cast(WalletNode, edge.v).chain
+        depositDelay = edge.bridgeDex.depositDelaySecondsByChain.get(fromChain)
+        withdrawDelay = edge.bridgeDex.withdrawDelaySecondsByChain.get(toChain)
+        if depositDelay is not None and withdrawDelay is not None:
+            return depositDelay + withdrawDelay
     return _BRIDGE_DELAY_SECONDS_BY_PROTOCOL[edge.bridgeProtocol]
