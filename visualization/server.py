@@ -486,6 +486,44 @@ def getMetricsByDex():
         return jsonify({"error": f"metrics DB unavailable: {exc}"}), 503
 
 
+@app.get("/api/metrics/phase-durations")
+def getMetricsPhaseDurations():
+    """Average/median seconds spent in each execution stage (requesting,
+    waiting_onchain, waiting_dex, waiting_settlement, ...) across every leg —
+    see metrics_db.phase_durations. Only possible because stages are now
+    persisted (sentinel.rebalance_leg_stage); no `live` filter, unlike the
+    other /api/metrics/* routes, since dry runs rarely emit stages at all
+    (see executor.py's on_stage docstring)."""
+    days = request.args.get("days", default=30, type=int)
+    try:
+        return jsonify(metrics_db.phase_durations(days=days))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"metrics DB unavailable: {exc}"}), 503
+
+
+@app.get("/api/rebalances")
+def getRebalances():
+    """Lists past journeys for the "Rebalance History" tab — read-only,
+    backed by sentinel.rebalance (see metrics_db.list_rebalances)."""
+    days = request.args.get("days", default=30, type=int)
+    try:
+        return jsonify(metrics_db.list_rebalances(days=days))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"metrics DB unavailable: {exc}"}), 503
+
+
+@app.get("/api/rebalances/<rebalance_id>/legs/<int:leg_index>/stages")
+def getRebalanceLegStages(rebalance_id: str, leg_index: int):
+    """A finished leg's stage-by-stage timeline, shaped exactly like the
+    {"type": "stage", ...} events POST /api/test-hop streams live (see
+    metrics_db.leg_stages) — lets the frontend replay a past execution
+    through the same renderer it uses for a live one."""
+    try:
+        return jsonify(metrics_db.leg_stages(rebalance_id, leg_index))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"metrics DB unavailable: {exc}"}), 503
+
+
 @app.get("/api/wallet-balances")
 def getWalletBalances():
     """Real on-chain USDC/USDT balances of the operating wallet (see

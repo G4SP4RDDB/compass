@@ -301,32 +301,49 @@ Arbitrum hop, now that those measurements drive `Time(e)`.
 ## Metrics dashboard (optional, dev-only)
 
 The "Rebalancings Tracker" page (`/metrics` on the graph viewer server)
-charts cost/delay history across runs. It reads from a local TimescaleDB
-container, not the JSON reports directly — those files under `reports/`
-stay the durable source of truth either way. If the container isn't
-running, that one page shows a "Metrics unavailable" banner; nothing else
-(the graph viewer, report saving, live execution) is affected — see
-`reporter.py`'s best-effort write, which only warns on failure.
+charts cost/delay history across runs. It reads from Sentinel's own shared
+TimescaleDB (`sentinelBackend/sentinel`'s `timescale` compose service,
+schema `sentinel`, tables `rebalance`/`rebalance_leg`/`rebalance_leg_stage`
+— created by Sentinel's own Alembic migration `0006`, not by Compass), not
+the JSON reports directly — those files under `reports/` stay the durable
+source of truth either way. Compass does not run its own database for this
+anymore. If Sentinel's DB isn't reachable, that one page shows a "Metrics
+unavailable" banner; nothing else (the graph viewer, report saving, live
+execution) is affected — see `reporter.py`'s best-effort write, which only
+warns on failure.
 
-To bring it up:
+To bring it up (in `sentinelBackend/sentinel`, run once per environment):
 
 ```bash
-docker compose up -d          # starts compass_timescaledb on localhost:5433
-                               # (see docker-compose.yml — 5433 to avoid
-                               # clashing with any local Postgres on 5432)
+docker compose up -d timescale
+docker compose run --rm migrate   # applies 0006, creating the rebalance* tables
 ```
 
-The schema (`sql/schema.sql`) applies automatically on the container's
-first boot. To populate it from reports already on disk (not needed for a
-fresh setup going forward — `reporter.py` writes new runs to it live):
+Then, in Compass's own `.env`, point `TIMESCALE_DB_URL` at it — get the real
+password from `sentinelBackend/sentinel/config/timescale.env` (gitignored
+there too):
+
+```bash
+TIMESCALE_DB_URL=postgresql://sentinel:<password>@localhost:5432/sentinel
+```
+
+Same-machine deployment only: Sentinel's `timescale` service publishes
+`127.0.0.1:5432` (loopback-only, deliberately), and Compass has no
+Dockerfile of its own — it connects as a plain host process, so `localhost`
+resolves to the same loopback Docker published to. If Compass is ever
+containerized, this breaks (`localhost` inside a new container is that
+container, not the host) — join Sentinel's `list-net` network and point at
+the `timescale` service name instead, or run with `network_mode: host`.
+
+To populate it from reports already on disk (not needed for a fresh setup
+going forward — `reporter.py` writes new runs to it live):
 
 ```bash
 python -m compass_test.scripts.backfill_metrics_db
 ```
 
-Connection string defaults to
-`postgresql://compass:compass_dev_only@localhost:5433/compass_metrics`
-(`config.py`'s `TIMESCALE_DB_URL`, overridable via the same-named env var).
+`config.py`'s `TIMESCALE_DB_URL` default is a `changeme` placeholder — never
+the real password — overridable via the same-named env var.
 
 ## Usage
 

@@ -22,11 +22,20 @@ def compare_journey(planned_journey: PlannedJourney, hop_comparisons: list[HopCo
     )
 
 
-def build_report(live: bool, journeys: list[JourneyComparison], unsupported_dexes: list[str]) -> TestRunReport:
+def build_report(
+    live: bool,
+    journeys: list[JourneyComparison],
+    unsupported_dexes: list[str],
+    run_id: str | None = None,
+) -> TestRunReport:
+    """`run_id`, when given, lets a caller that already generated one before
+    execution (to tag rebalance_leg_stage rows as they streamed live — see
+    hop_runner.run_single_hop / cli.py's `run` command) reuse it here, so the
+    report and the stages already written under it share one id."""
     import time
 
     return TestRunReport(
-        runId=new_run_id(),
+        runId=run_id or new_run_id(),
         createdAt=time.time(),
         live=live,
         journeys=journeys,

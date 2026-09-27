@@ -1,6 +1,8 @@
-"""One-off: backfills every compass_test/reports/*.json into TimescaleDB.
-Safe to re-run — metrics_db.upsert_report is idempotent on
-(run_id, journey_index, hop_index, started_at).
+"""One-off: backfills every compass_test/reports/*.json into Sentinel's
+TimescaleDB (sentinel.rebalance / rebalance_leg). Safe to re-run —
+metrics_db.upsert_report is idempotent on (rebalance_id) / (rebalance_id,
+leg_index). Assumes Sentinel's Alembic migration 0006 has already created
+the tables — this script does not create schema itself.
 
 Usage: python -m compass_test.scripts.backfill_metrics_db
 """
@@ -11,12 +13,11 @@ from .. import metrics_db, reporter
 
 
 def main() -> None:
-    metrics_db.ensure_schema()
     reports = reporter.list_reports()
-    total_operations = 0
+    total_legs = 0
     for report in reports:
-        total_operations += metrics_db.upsert_report(report)
-    print(f"backfilled {len(reports)} reports, {total_operations} operation rows")
+        total_legs += metrics_db.upsert_report(report)
+    print(f"backfilled {len(reports)} reports, {total_legs} leg rows")
 
 
 if __name__ == "__main__":
