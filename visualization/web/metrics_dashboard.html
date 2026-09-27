@@ -141,6 +141,10 @@
     <h2>Rebalancing operations by DEX</h2>
     <canvas id="byDexChart"></canvas>
   </div>
+  <div class="chart-card">
+    <h2>Time spent per stage (s)</h2>
+    <canvas id="phaseDurationChart"></canvas>
+  </div>
 </div>
 
 <script>
@@ -186,6 +190,7 @@ function dayLabel(iso) {
 let dexBranding = {};
 let charts = {};
 let byDexRaw = [];
+let phaseDurationRaw = [];
 
 function makeLineChart(canvasId, label, formatter) {
   const ctx = document.getElementById(canvasId).getContext('2d');
@@ -297,6 +302,42 @@ function makeDexChart(canvasId) {
   });
 }
 
+function makePhaseDurationChart(canvasId) {
+  // Same shape as makeDexChart (horizontal bar) — stage_code isn't a DEX,
+  // so no per-bar branding color, just the accent.
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  return new Chart(ctx, {
+    type: 'bar',
+    data: { labels: [], datasets: [{
+      label: 'Avg seconds',
+      data: [],
+      backgroundColor: COLORS.accent,
+      borderRadius: 4,
+      barThickness: 22,
+    }] },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) => {
+              const d = phaseDurationRaw[item.dataIndex] || {};
+              return [
+                `Avg: ${fmtSeconds(d.avg_seconds)}`,
+                `Median: ${fmtSeconds(d.median_seconds)}`,
+                `Samples: ${d.sample_count ?? 0}`,
+              ];
+            },
+          },
+        },
+      },
+      scales: { x: { ...axisOpts, beginAtZero: true }, y: axisOpts },
+    },
+  });
+}
+
 function queryParams() {
   const days = document.getElementById('daysSelect').value;
   const live = document.getElementById('liveOnly').checked;
@@ -322,13 +363,14 @@ function setBanner(message) {
 async function refresh() {
   const qs = queryParams();
   try {
-    const [summary, daily, cost, costBreakdown, delay, byDex] = await Promise.all([
+    const [summary, daily, cost, costBreakdown, delay, byDex, phaseDurations] = await Promise.all([
       fetchJson(`/api/metrics/summary?${qs}`),
       fetchJson(`/api/metrics/daily-counts?${qs}`),
       fetchJson(`/api/metrics/cost-over-time?${qs}`),
       fetchJson(`/api/metrics/cost-breakdown?${qs}`),
       fetchJson(`/api/metrics/delay-over-time?${qs}`),
       fetchJson(`/api/metrics/by-dex?${qs}`),
+      fetchJson(`/api/metrics/phase-durations?${qs}`),
     ]);
     setBanner(null);
 
@@ -366,6 +408,11 @@ async function refresh() {
     charts.byDex.data.datasets[0].data = byDex.map((r) => r.operation_count);
     charts.byDex.data.datasets[0].backgroundColor = byDex.map((r) => dexBranding[r.dex] || COLORS.accent);
     charts.byDex.update();
+
+    phaseDurationRaw = phaseDurations;
+    charts.phaseDuration.data.labels = phaseDurations.map((r) => r.stage_code);
+    charts.phaseDuration.data.datasets[0].data = phaseDurations.map((r) => r.avg_seconds);
+    charts.phaseDuration.update();
   } catch (err) {
     setBanner(`Metrics unavailable: ${err.message}. Is the TimescaleDB container running (docker compose up -d)?`);
   }
@@ -382,6 +429,7 @@ async function init() {
   charts.costBreakdown = makeCostBreakdownChart('costBreakdownChart');
   charts.delay = makeLineChart('delayChart', 'Avg delay', fmtSeconds);
   charts.byDex = makeDexChart('byDexChart');
+  charts.phaseDuration = makePhaseDurationChart('phaseDurationChart');
 
   document.getElementById('daysSelect').addEventListener('change', refresh);
   document.getElementById('liveOnly').addEventListener('change', refresh);

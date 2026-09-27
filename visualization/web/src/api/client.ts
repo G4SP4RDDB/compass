@@ -13,7 +13,9 @@ import type {
   ExecutionStatus,
   ImbalanceEntry,
   ImbalancesResponse,
+  LegStage,
   MeasuredDelaysResponse,
+  RebalanceSummary,
   TestHopRequestBody,
   TestHopResult,
   TestRun,
@@ -162,4 +164,22 @@ export async function fetchTestRun(runId: string): Promise<TestRun> {
   const res = await fetch(`/api/test-runs/${encodeURIComponent(runId)}`);
   if (!res.ok) throw new Error("bad response");
   return res.json();
+}
+
+// Sentinel's TimescaleDB projection (sentinel.rebalance/rebalance_leg_stage)
+// — the "Rebalance History" tab's data source, distinct from the JSON-report
+// endpoints above. Both can 503 if the DB is unreachable (see server.py);
+// callers surface that the same way they already do for the metrics charts.
+export async function fetchRebalances(days = 30): Promise<RebalanceSummary[]> {
+  const res = await fetch(`/api/rebalances?days=${encodeURIComponent(days)}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error((data as ApiErrorBody).error || "bad response");
+  return data;
+}
+
+export async function fetchLegStages(rebalanceId: string, legIndex: number): Promise<LegStage[]> {
+  const res = await fetch(`/api/rebalances/${encodeURIComponent(rebalanceId)}/legs/${legIndex}/stages`);
+  const data = await res.json();
+  if (!res.ok) throw new Error((data as ApiErrorBody).error || "bad response");
+  return data;
 }
