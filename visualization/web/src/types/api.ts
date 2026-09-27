@@ -32,6 +32,7 @@ export interface ExecutedHop {
   status: "ok" | "unconfirmed" | "error";
   actualCostUsd: number | null;
   actualTimeSeconds: number;
+  txHash?: string | null;
   notes?: string;
 }
 
