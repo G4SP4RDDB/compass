@@ -415,6 +415,9 @@
   .exec-batch-row.queued { opacity: .55; }
   .exec-batch-row.skipped { opacity: .55; }
   .exec-batch-summary { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 11.5px; font-weight: 600; }
+  .exec-explorer-link { margin-top: 6px; font-size: 11.5px; }
+  .exec-explorer-link a { color: var(--accent); text-decoration: none; }
+  .exec-explorer-link a:hover { text-decoration: underline; }
 
   /* Staged progress for a LIVE run (executor.py's on_stage callback,
      streamed by POST /api/test-hop — see runLiveHop). Each stage is
@@ -591,6 +594,8 @@
   #configView.active { display: block; }
   #testResultsView { flex: 1; display: none; overflow-y: auto; padding: 18px 24px; }
   #testResultsView.active { display: block; }
+  #rebalanceHistoryView { flex: 1; display: none; overflow-y: auto; padding: 18px 24px; }
+  #rebalanceHistoryView.active { display: block; }
   .config-hint { color: var(--muted); font-size: 12px; max-width: 640px; margin: 0 0 16px; line-height: 1.5; }
   .config-table { border-collapse: collapse; width: 100%; max-width: 860px; font-size: 12.5px; }
   .config-table th {
@@ -656,6 +661,22 @@
   .results-err-na { color: var(--muted); }
   .results-status-error, .results-status-unconfirmed { color: var(--neg); font-weight: 600; }
   .results-empty { color: var(--muted); font-size: 13px; }
+
+  /* "Rebalance History" tab: same .results-journey card shell as "Test
+     Results" above, plus a per-row leg picker that replays a finished leg's
+     stages through the exact tracker (see execution/StageTracker.ts) a LIVE
+     run's popup uses — see panels/rebalanceHistory.ts. */
+  .rebalance-leg-controls { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 12px; color: var(--muted); }
+  .rebalance-leg-controls input {
+    padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--bg); color: var(--text); font-size: 12px;
+  }
+  .rebalance-leg-controls button {
+    padding: 4px 10px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--panel-bg); color: var(--text); font-size: 12px; cursor: pointer;
+  }
+  .rebalance-leg-controls button:hover { border-color: var(--accent); }
+  .rebalance-stages { padding: 0 14px 12px; }
 
   #tooltip {
     position: fixed; pointer-events: none; background: var(--panel-bg); color: var(--text);
@@ -1365,6 +1386,24 @@ async function fetchTestRun(runId) {
         throw new Error("bad response");
     return res.json();
 }
+// Sentinel's TimescaleDB projection (sentinel.rebalance/rebalance_leg_stage)
+// — the "Rebalance History" tab's data source, distinct from the JSON-report
+// endpoints above. Both can 503 if the DB is unreachable (see server.py);
+// callers surface that the same way they already do for the metrics charts.
+async function fetchRebalances(days = 30) {
+    const res = await fetch(`/api/rebalances?days=${encodeURIComponent(days)}`);
+    const data = await res.json();
+    if (!res.ok)
+        throw new Error(data.error || "bad response");
+    return data;
+}
+async function fetchLegStages(rebalanceId, legIndex) {
+    const res = await fetch(`/api/rebalances/${encodeURIComponent(rebalanceId)}/legs/${legIndex}/stages`);
+    const data = await res.json();
+    if (!res.ok)
+        throw new Error(data.error || "bad response");
+    return data;
+}
 
 // execution/StageTracker.ts
 // Shared outcome -> (css class, icon) mapping for the stage tracker, the
@@ -1587,6 +1626,20 @@ function notifyLiveRunComplete() {
     handler?.();
 }
 
+// utils/explorer.ts
+// Chain -> block explorer tx-URL prefix. Deliberately small: only chains
+// the user actually wants a link for. A chain not in here (Ethereum, Base,
+// Optimism, Polygon, Avalanche, Solana) just gets no link — not an error,
+// see explorerTxUrl.
+const EXPLORER_BASE_URLS = {
+    ARBITRUM: "https://arbiscan.io/tx/",
+    BSC: "https://bscscan.com/tx/",
+};
+function explorerTxUrl(chain, txHash) {
+    const base = EXPLORER_BASE_URLS[chain];
+    return base ? `${base}${txHash}` : null;
+}
+
 // execution/testHop.ts
 // Shared exec modal instance — a single popup for the whole page, used by
 // this module, execution/liveExecution.ts (onExecuteClick -> showLiveConfirm
@@ -1797,6 +1850,10 @@ async function runLiveHop(resultEl, box, data, ctx) {
     renderHopTestResult(resultEl, finalEvent, ctx, tracker.html());
     if (status === "unconfirmed")
         addRecheckBalanceButton(resultEl, ctx.dex);
+    const explorerUrl = finalEvent.executed.txHash ? explorerTxUrl(ctx.chain, finalEvent.executed.txHash) : null;
+    if (explorerUrl) {
+        execModal.appendBody(`<div class="exec-explorer-link"><a href="${explorerUrl}" target="_blank" rel="noopener noreferrer">View transaction ↗</a></div>`);
+    }
     execModal.finish(status, hopLabel);
     notifyLiveRunComplete();
 }
@@ -1980,6 +2037,10 @@ async function runAllLive(ops) {
             failedCount++;
             if (row.to)
                 failedTo.add(row.to);
+        }
+        const explorerUrl = finalEvent.executed.txHash ? explorerTxUrl(row.ctx.chain, finalEvent.executed.txHash) : null;
+        if (explorerUrl) {
+            row.rowEl.insertAdjacentHTML("beforeend", `<div class="exec-explorer-link"><a href="${explorerUrl}" target="_blank" rel="noopener noreferrer">View transaction ↗</a></div>`);
         }
         if (row.resultEl) {
             renderHopTestResult(row.resultEl, finalEvent, row.ctx, tracker.html());
@@ -3266,11 +3327,7 @@ async function loadSelectedRun(runId) {
         document.getElementById("resultsJourneys").innerHTML = `<p class="results-empty">Could not load run ${runId}.</p>`;
     }
 }
-async function initTestResults() {
-    if (testResultsLoaded)
-        return;
-    testResultsLoaded = true;
-    const select = document.getElementById("resultsRunSelect");
+async function loadRunsList(select) {
     let runs;
     try {
         runs = await fetchTestRuns();
@@ -3278,15 +3335,40 @@ async function initTestResults() {
     catch {
         document.getElementById("resultsJourneys").innerHTML =
             "<p class=\"results-empty\">Not connected to the results server. Serve this page with `python -m visualization.server`.</p>";
-        return;
+        return null;
     }
     if (!runs.length) {
         document.getElementById("resultsJourneys").innerHTML =
             "<p class=\"results-empty\">No test runs yet — see compass_test/README.md for how to run one (`python -m compass_test.cli run ...`).</p>";
-        return;
+        return null;
     }
     select.innerHTML = runs.map(r => `<option value="${r.runId}">${new Date(r.createdAt * 1000).toLocaleString()} — ${r.live ? "live" : "dry-run"}</option>`).join("");
+    return runs;
+}
+async function initTestResults() {
+    if (testResultsLoaded)
+        return;
+    testResultsLoaded = true;
+    const select = document.getElementById("resultsRunSelect");
+    const runs = await loadRunsList(select);
+    if (!runs)
+        return;
     select.addEventListener("change", () => loadSelectedRun(select.value));
+    await loadSelectedRun(runs[0].runId);
+}
+// A live hop just wrote a new compass_test/reports/*.json (see reporter.py) -- the cached run
+// list/dropdown is now missing it, the same staleness rebalanceHistory.ts has for
+// sentinel.rebalance. If the tab has never been opened this session there is nothing cached to
+// go stale -- initTestResults will fetch fresh, including this run, the first time it is.
+// Otherwise, repopulate the dropdown and jump to the newest run without re-binding the change
+// listener (initTestResults already did that, once).
+async function refreshTestResults() {
+    if (!testResultsLoaded)
+        return;
+    const select = document.getElementById("resultsRunSelect");
+    const runs = await loadRunsList(select);
+    if (!runs)
+        return;
     await loadSelectedRun(runs[0].runId);
 }
 
@@ -3648,6 +3730,106 @@ async function renderWalletBalancesSidebar() {
     <div class="wallet-total"><span>Total</span><span>$${fmt(total)}${anyMissing ? "+" : ""}</span></div>`;
 }
 
+// panels/rebalanceHistory.ts
+// "Rebalance History" tab: read-only replay of what's durably landed in
+// Sentinel's TimescaleDB (sentinel.rebalance / rebalance_leg_stage) — the
+// stage-by-stage trail a LIVE run's progress popup (execution/testHop.ts,
+// StageTracker.ts) used to only stream to the browser and discard. Distinct
+// from panels/testResults.ts (the JSON-report-backed "Test Results" tab,
+// which stays the source of truth): this is durable, queryable history, and
+// can go dark (DB unreachable) the same way /metrics already can.
+let rebalanceHistoryLoaded = false;
+function fmtUsd(x) {
+    return x === null || x === undefined ? "n/a" : "$" + x.toFixed(2);
+}
+function fmtTs(x) {
+    return x ? new Date(x).toLocaleString() : "—";
+}
+async function showLegStages(rebalanceId, legIndex, container) {
+    container.innerHTML = `<p class="results-empty">Loading…</p>`;
+    let stages;
+    try {
+        stages = await fetchLegStages(rebalanceId, legIndex);
+    }
+    catch (err) {
+        container.innerHTML = `<p class="results-empty">Could not load stages: ${err instanceof Error ? err.message : String(err)}</p>`;
+        return;
+    }
+    if (!stages.length) {
+        container.innerHTML =
+            `<p class="results-empty">No stages recorded for leg ${legIndex} — dry runs rarely emit any ` +
+                `(see executor.py's on_stage docstring), or this leg index doesn't exist on this rebalance.</p>`;
+        return;
+    }
+    // Replay: feed every persisted stage through the exact tracker a LIVE
+    // run's popup uses, in the order it happened, then freeze the last one as
+    // done — a finished leg's history has no pending/spinning stage.
+    container.innerHTML = "";
+    const tracker = createStageTracker(container, undefined);
+    for (const s of stages)
+        tracker.push(s.message, s.domain || undefined);
+    tracker.finish("ok");
+}
+function rebalanceRowHtml(r) {
+    const statusClass = r.status === "failed" ? "results-status-error" : "";
+    return `<div class="results-journey">
+    <div class="results-journey-head">
+      <span>${r.from_dex} → ${r.to_dex}</span>
+      <span class="muted">
+        ${r.stable} · ${fmtUsd(r.planned_amount_usd)} · ${r.live ? "live" : "dry-run"}
+        · <span class="${statusClass}">${r.status}</span>
+        · started ${fmtTs(r.started_at)}
+      </span>
+    </div>
+    <div class="rebalance-leg-controls">
+      <label>Leg <input type="number" min="0" value="0" class="leg-index-input" /></label>
+      <button type="button" class="rebalance-view-stages-btn">View stages</button>
+    </div>
+    <div class="rebalance-stages"></div>
+  </div>`;
+}
+function bindRowHandlers(rowEl, r) {
+    const btn = rowEl.querySelector(".rebalance-view-stages-btn");
+    const input = rowEl.querySelector(".leg-index-input");
+    const stagesEl = rowEl.querySelector(".rebalance-stages");
+    btn.addEventListener("click", () => showLegStages(r.rebalance_id, Number(input.value) || 0, stagesEl));
+}
+async function loadRebalances() {
+    const listEl = document.getElementById("rebalanceHistoryList");
+    let rebalances;
+    try {
+        rebalances = await fetchRebalances();
+    }
+    catch (err) {
+        listEl.innerHTML =
+            `<p class="results-empty">Sentinel's TimescaleDB is unavailable: ` +
+                `${err instanceof Error ? err.message : String(err)}. Same DB the /metrics dashboard reads.</p>`;
+        return;
+    }
+    if (!rebalances.length) {
+        listEl.innerHTML =
+            `<p class="results-empty">No rebalances recorded yet — run one ` +
+                `(<code>python -m compass_test.cli run ...</code> or "Test This Edge") to see it here.</p>`;
+        return;
+    }
+    listEl.innerHTML = rebalances.map(rebalanceRowHtml).join("");
+    rebalances.forEach((r, i) => bindRowHandlers(listEl.children[i], r));
+}
+async function initRebalanceHistory() {
+    if (rebalanceHistoryLoaded)
+        return;
+    rebalanceHistoryLoaded = true;
+    await loadRebalances();
+}
+// A live hop just landed a new row in sentinel.rebalance -- the cached list is now stale the
+// same way the wallet-balances cache is (see App.ts's onLiveRunComplete wiring). Reloads
+// unconditionally: the target <div> is in the DOM whether or not this tab is the visible one,
+// so it's ready with fresh data the next time it's switched to.
+async function refreshRebalanceHistory() {
+    rebalanceHistoryLoaded = true;
+    await loadRebalances();
+}
+
 // App.ts
 // Composition root: wires graph/GraphRenderer.ts and state/
 // SelectionController.ts together (they never import each other directly —
@@ -3688,6 +3870,11 @@ class App {
             getWalletBalances(true);
             renderWalletBalancesSidebar();
             selectionController.refreshCurrent();
+            // The same live hop also just landed a new row in sentinel.rebalance --
+            // the Rebalance History tab's cached list is equally stale.
+            refreshRebalanceHistory();
+            // ...and a new compass_test/reports/*.json -- same staleness for Test Results.
+            refreshTestResults();
         });
         initImbalances();
         initWalletDeficits();

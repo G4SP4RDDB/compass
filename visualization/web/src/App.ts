@@ -10,6 +10,8 @@ import { initImbalances, onImbalancesLoaded } from "./forms/imbalanceForm";
 import { initWalletDeficits, onWalletDeficitsLoaded } from "./forms/walletDeficitForm";
 import { onLiveRunComplete } from "./execution/liveHopRequest";
 import { getWalletBalances } from "./state/walletBalancesCache";
+import { refreshTestResults } from "./panels/testResults";
+import { refreshRebalanceHistory } from "./panels/rebalanceHistory";
 
 // Composition root: wires graph/GraphRenderer.ts and state/
 // SelectionController.ts together (they never import each other directly —
@@ -52,6 +54,11 @@ export class App {
       getWalletBalances(true);
       renderWalletBalancesSidebar();
       selectionController.refreshCurrent();
+      // The same live hop also just landed a new row in sentinel.rebalance --
+      // the Rebalance History tab's cached list is equally stale.
+      refreshRebalanceHistory();
+      // ...and a new compass_test/reports/*.json -- same staleness for Test Results.
+      refreshTestResults();
     });
 
     initImbalances();

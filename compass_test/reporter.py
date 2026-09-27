@@ -33,13 +33,15 @@ def save_report(report: TestRunReport) -> Path:
             calibration.rebuild_measured_delays()
         except Exception as exc:  # noqa: BLE001 - surfaced, not fatal
             print(f"warning: could not rebuild measured delays: {exc}")
-    # Best-effort projection into TimescaleDB for the /metrics dashboard
-    # (see metrics_db.py) — the JSON files above are already saved and
-    # remain the source of truth, a DB outage must never lose this report.
+    # Best-effort projection into Sentinel's TimescaleDB for the /metrics
+    # dashboard (see metrics_db.py) — the JSON files above are already saved
+    # and remain the source of truth, a DB outage must never lose this
+    # report. The tables (sentinel.rebalance/rebalance_leg/
+    # rebalance_leg_stage) are created by Sentinel's own Alembic migration,
+    # not by Compass — there is no ensure_schema() call here anymore.
     from . import metrics_db  # local import: mirrors calibration's lazy import above
 
     try:
-        metrics_db.ensure_schema()
         metrics_db.upsert_report(report)
     except Exception as exc:  # noqa: BLE001 - surfaced, not fatal
         print(f"warning: could not write report to TimescaleDB: {exc}")

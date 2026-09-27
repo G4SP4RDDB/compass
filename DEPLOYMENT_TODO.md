@@ -67,9 +67,10 @@ etc.) rather than shipping the `.env` file itself:
   *separate* repo/`.env` this one reads by path; confirm it's deployed
   somewhere this server can still reach, or copy its contents into
   whatever secrets store you land on.
-- `TIMESCALE_DB_URL` currently defaults to a hardcoded dev password
-  (`compass_dev_only`, see `docker-compose.yml`) — set a real one if you
-  stand up TimescaleDB for real (see §4).
+- `TIMESCALE_DB_URL` points at Sentinel's shared TimescaleDB, not one Compass
+  runs itself (see §4) — get the real password from
+  `sentinelBackend/sentinel/config/timescale.env` (gitignored there too),
+  never the placeholder default in `config.py`.
 
 - [ ] Also decide `COMPASS_TEST_ALLOW_LIVE`, `COMPASS_TEST_MAX_USD_PER_HOP`,
   `COMPASS_TEST_MAX_USD_PER_RUN` deliberately for this deployment's real
@@ -101,12 +102,13 @@ Flask app itself.
   test/live run (TimescaleDB, if used, is only an additive projection of
   these, see `compass_test/metrics_db.py`'s own comment). Same persistence
   question as above.
-- [ ] TimescaleDB (`docker-compose.yml`) is optional — the app works
-  without it, only the `/metrics` dashboard goes dark (confirmed: it's
-  not currently running even in dev, server just logs a connection-refused
-  warning and moves on). Decide if you're standing it up for this
-  deployment; if so, it needs its own backup story, not just
-  `docker compose up -d` and forget.
+- [ ] TimescaleDB is optional — the app works without it, only the
+  `/metrics` dashboard and the "Rebalance History" replay view go dark if
+  it's unreachable (server just logs a connection-refused warning and moves
+  on). Compass no longer runs its own instance: it points at Sentinel's
+  (`sentinelBackend/sentinel`'s `timescale` compose service). Confirm that
+  service is reachable from wherever this deploys, and that Sentinel's own
+  backup story (it's their database, not Compass's) covers it.
 
 ## 5. Observability
 

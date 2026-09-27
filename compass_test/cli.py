@@ -53,9 +53,9 @@ import sys
 
 from graph.structures.DEXes import Chain, Stable
 
-from . import calibration, comparator, config, executor, plan_loader, reporter
+from . import calibration, comparator, config, executor, metrics_db, plan_loader, reporter
 from .hop_runner import HopAborted, HopValidationError, run_single_hop
-from .models import HopType
+from .models import HopType, new_run_id
 from .runners.registry import get_connector
 from .wallet import OperatingWallet
 
@@ -176,17 +176,32 @@ def _cmd_run(args: argparse.Namespace) -> int:
             print("Aborted.")
             return 1
 
+    # Generated before execution: a live hop's stages are persisted to
+    # sentinel.rebalance_leg_stage AS they happen (see _persist_stage below),
+    # so the id they're tagged with has to exist before run_journey_hops is
+    # even called — comparator.build_report used to only generate one
+    # afterward. journey_index is always 0: this CLI command runs one
+    # journey per invocation.
+    run_id = new_run_id()
+
+    def _persist_stage(leg_index: int, stage_code: str, message: str, domain: str) -> None:
+        try:
+            metrics_db.append_stage(metrics_db.rebalance_id(run_id, 0), leg_index, stage_code, message, domain)
+        except Exception as exc:  # noqa: BLE001 - best-effort, must never break execution
+            print(f"warning: could not persist stage {stage_code} for leg {leg_index}: {exc}", file=sys.stderr)
+
     executed = executor.run_journey_hops(
         planned_hops=journey.hops,
         connector_for_dex=get_connector,
         amount_usd=amount,
         wallet=wallet,
         live=args.live,
+        on_stage=_persist_stage,
     )
 
     hop_comparisons = [comparator.compare_hop(p, e) for p, e in zip(journey.hops, executed)]
     journey_comparison = comparator.compare_journey(journey, hop_comparisons)
-    report = comparator.build_report(live=args.live, journeys=[journey_comparison], unsupported_dexes=[])
+    report = comparator.build_report(live=args.live, journeys=[journey_comparison], unsupported_dexes=[], run_id=run_id)
     path = reporter.save_report(report)
 
     print(f"\n{journey.fromDex} -> {journey.toDex} ({'LIVE' if args.live else 'dry-run'})")

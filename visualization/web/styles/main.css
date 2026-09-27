@@ -573,6 +573,8 @@
   #configView.active { display: block; }
   #testResultsView { flex: 1; display: none; overflow-y: auto; padding: 18px 24px; }
   #testResultsView.active { display: block; }
+  #rebalanceHistoryView { flex: 1; display: none; overflow-y: auto; padding: 18px 24px; }
+  #rebalanceHistoryView.active { display: block; }
   .config-hint { color: var(--muted); font-size: 12px; max-width: 640px; margin: 0 0 16px; line-height: 1.5; }
   .config-table { border-collapse: collapse; width: 100%; max-width: 860px; font-size: 12.5px; }
   .config-table th {
@@ -638,6 +640,22 @@
   .results-err-na { color: var(--muted); }
   .results-status-error, .results-status-unconfirmed { color: var(--neg); font-weight: 600; }
   .results-empty { color: var(--muted); font-size: 13px; }
+
+  /* "Rebalance History" tab: same .results-journey card shell as "Test
+     Results" above, plus a per-row leg picker that replays a finished leg's
+     stages through the exact tracker (see execution/StageTracker.ts) a LIVE
+     run's popup uses — see panels/rebalanceHistory.ts. */
+  .rebalance-leg-controls { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 12px; color: var(--muted); }
+  .rebalance-leg-controls input {
+    padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--bg); color: var(--text); font-size: 12px;
+  }
+  .rebalance-leg-controls button {
+    padding: 4px 10px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--panel-bg); color: var(--text); font-size: 12px; cursor: pointer;
+  }
+  .rebalance-leg-controls button:hover { border-color: var(--accent); }
+  .rebalance-stages { padding: 0 14px 12px; }
 
   #tooltip {
     position: fixed; pointer-events: none; background: var(--panel-bg); color: var(--text);

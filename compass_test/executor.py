@@ -651,19 +651,28 @@ def run_journey_hops(
     wallet: OperatingWallet,
     live: bool,
     spent_so_far: float = 0.0,
+    on_stage: Callable[[int, str, str, str], None] | None = None,
 ) -> list[ExecutedHop]:
     """Runs a journey's hops back to back (Withdraw, optionally Swap, then
     Deposit). Each next leg's amount is the previous leg's ACTUALLY received
     amount when that ran live (we can only swap/deposit what we actually
-    got), not the originally requested test amount."""
+    got), not the originally requested test amount.
+
+    `on_stage(leg_index, stage_code, message, domain)`, when given, is
+    adapted per hop into the 3-arg callback `run_hop` expects — a journey has
+    more than one leg, so the caller needs to know which one a stage belongs
+    to, unlike a single standalone hop (see hop_runner.run_single_hop)."""
     executed: list[ExecutedHop] = []
     spent = spent_so_far
     carried_amount_usd: float | None = None
 
-    for planned in planned_hops:
+    for leg_index, planned in enumerate(planned_hops):
         amount = carried_amount_usd if carried_amount_usd is not None else amount_usd
         connector = None if planned.hopType == HopType.SWAP else connector_for_dex(planned.dex)
-        result = run_hop(planned, connector, amount, wallet, live, spent_so_far=spent)
+        run_hop_kwargs = {"spent_so_far": spent}
+        if on_stage is not None:
+            run_hop_kwargs["on_stage"] = lambda stage, message, domain, _i=leg_index: on_stage(_i, stage, message, domain)
+        result = run_hop(planned, connector, amount, wallet, live, **run_hop_kwargs)
         executed.append(result)
         spent += amount
         if planned.hopType in (HopType.WITHDRAW, HopType.SWAP, HopType.BRIDGE) and live and result.amountReceivedUsd is not None:

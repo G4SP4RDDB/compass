@@ -1,6 +1,6 @@
 import { estTimeTitle } from "../utils/format";
 import { fetchTestRuns, fetchTestRun } from "../api/client";
-import type { ResultHop, ResultJourney, TestRun } from "../types/api";
+import type { ResultHop, ResultJourney, TestRun, TestRunSummary } from "../types/api";
 
 // "Test Results" tab : lecture seule des rapports compass_test/reports/*.json
 // via GET /api/test-runs (liste) / GET /api/test-runs/<runId> (détail), voir
@@ -84,26 +84,46 @@ async function loadSelectedRun(runId: string): Promise<void> {
   }
 }
 
-export async function initTestResults(): Promise<void> {
-  if (testResultsLoaded) return;
-  testResultsLoaded = true;
-  const select = document.getElementById("resultsRunSelect") as HTMLSelectElement;
+async function loadRunsList(select: HTMLSelectElement): Promise<TestRunSummary[] | null> {
   let runs;
   try {
     runs = await fetchTestRuns();
   } catch {
     document.getElementById("resultsJourneys")!.innerHTML =
       "<p class=\"results-empty\">Not connected to the results server. Serve this page with `python -m visualization.server`.</p>";
-    return;
+    return null;
   }
   if (!runs.length) {
     document.getElementById("resultsJourneys")!.innerHTML =
       "<p class=\"results-empty\">No test runs yet — see compass_test/README.md for how to run one (`python -m compass_test.cli run ...`).</p>";
-    return;
+    return null;
   }
   select.innerHTML = runs.map(r =>
     `<option value="${r.runId}">${new Date(r.createdAt * 1000).toLocaleString()} — ${r.live ? "live" : "dry-run"}</option>`
   ).join("");
+  return runs;
+}
+
+export async function initTestResults(): Promise<void> {
+  if (testResultsLoaded) return;
+  testResultsLoaded = true;
+  const select = document.getElementById("resultsRunSelect") as HTMLSelectElement;
+  const runs = await loadRunsList(select);
+  if (!runs) return;
   select.addEventListener("change", () => loadSelectedRun(select.value));
+  await loadSelectedRun(runs[0]!.runId);
+}
+
+// A live hop just wrote a new compass_test/reports/*.json (see reporter.py) -- the cached run
+// list/dropdown is now missing it, the same staleness rebalanceHistory.ts has for
+// sentinel.rebalance. If the tab has never been opened this session there is nothing cached to
+// go stale -- initTestResults will fetch fresh, including this run, the first time it is.
+// Otherwise, repopulate the dropdown and jump to the newest run without re-binding the change
+// listener (initTestResults already did that, once).
+export async function refreshTestResults(): Promise<void> {
+  if (!testResultsLoaded) return;
+  const select = document.getElementById("resultsRunSelect") as HTMLSelectElement;
+  const runs = await loadRunsList(select);
+  if (!runs) return;
   await loadSelectedRun(runs[0]!.runId);
 }

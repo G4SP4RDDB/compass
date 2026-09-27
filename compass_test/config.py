@@ -109,13 +109,20 @@ OPERATING_WALLET_ADDRESS = os.getenv("COMPASS_TEST_WALLET_ADDRESS")
 SOLANA_WALLET_KEY_VAR = os.getenv("COMPASS_TEST_SOLANA_WALLET_KEY_VAR", "")
 SOLANA_WALLET_ADDRESS = os.getenv("COMPASS_TEST_SOLANA_WALLET_ADDRESS")
 
-# --- Metrics dashboard (TimescaleDB, see ../docker-compose.yml) ---------
-# reporter.save_report() best-effort projects every report into this DB
-# (see metrics_db.py) alongside the JSON files above, which stay the
-# source of truth — an unreachable/misconfigured DB never blocks a report
-# from saving. Default points at the local `docker compose up -d` service.
+# --- Metrics dashboard (TimescaleDB) ------------------------------------
+# reporter.save_report() best-effort projects every report into
+# sentinel.rebalance / sentinel.rebalance_leg / sentinel.rebalance_leg_stage
+# (see metrics_db.py) alongside the JSON files above, which stay the source
+# of truth — an unreachable/misconfigured DB never blocks a report from
+# saving. Compass no longer runs its own TimescaleDB: this points at
+# Sentinel's shared instance (sentinelBackend/sentinel's `timescale` compose
+# service, host port 5432, db `sentinel`). The tables are created by
+# Sentinel's own Alembic migration (0006), not by Compass — there is no
+# ensure_schema() here anymore. The password below is a placeholder; set the
+# real one (sentinelBackend/sentinel/config/timescale.env, gitignored there
+# too) in Compass's own .env.
 TIMESCALE_DB_URL = os.getenv(
-    "TIMESCALE_DB_URL", "postgresql://compass:compass_dev_only@localhost:5433/compass_metrics"
+    "TIMESCALE_DB_URL", "postgresql://sentinel:changeme@localhost:5432/sentinel"
 )
 
 # Hardcoded deposit addresses, one env var per (DEX, chain) — the PRIMARY

@@ -176,18 +176,20 @@
   "MEXC": {
     "BSC": {
       "depositDelaySeconds": {
-        "lastMeasuredAt": 1788645791.731912,
+        "lastMeasuredAt": 1790509813.157591,
         "maxSeconds": 45.48959684371948,
-        "meanSeconds": 45.48959684371948,
-        "minSeconds": 45.48959684371948,
-        "n": 1,
+        "meanSeconds": 33.17303657531738,
+        "minSeconds": 20.856476306915283,
+        "n": 2,
         "sampleRunIds": [
-          "20260905T220311Z"
+          "20260905T220311Z",
+          "20260927T114952Z"
         ],
         "samplesSeconds": [
-          45.48959684371948
+          45.48959684371948,
+          20.856476306915283
         ],
-        "stdSeconds": 0.0
+        "stdSeconds": 17.418246573359855
       },
       "withdrawDelaySeconds": {
         "lastMeasuredAt": 1788694632.8219619,

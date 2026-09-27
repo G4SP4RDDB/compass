@@ -14,6 +14,7 @@ loosens a safety check.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Callable
 
@@ -21,11 +22,34 @@ from connectors.cowswap import COWSWAP_VENUE_NAME
 from graph.structures.bridges import BridgeProtocol, availableBridgeProtocols
 from graph.structures.DEXes import Chain, Stable
 
-from . import comparator, config, executor, plan_loader, reporter
-from .models import HopComparison, HopType, TestRunReport
+from . import comparator, config, executor, metrics_db, plan_loader, reporter
+from .models import HopComparison, HopType, TestRunReport, new_run_id
 from .runners.cowswap import CowSwapRunner
 from .runners.registry import get_connector, is_supported
 from .wallet import OperatingWallet
+
+log = logging.getLogger(__name__)
+
+
+def _persisting_on_stage(
+    run_id: str, leg_index: int, user_cb: Callable[[str, str, str], None] | None
+) -> Callable[[str, str, str], None]:
+    """Wraps a caller's on_stage (e.g. server.py's SSE forwarder, or None)
+    so every stage also lands in sentinel.rebalance_leg_stage — durable
+    history a live run's progress used to only stream to the browser and
+    then discard. Best-effort: a DB hiccup here must never interrupt or
+    fail a live hop execution, so it's logged and swallowed, same contract
+    as metrics_db's other callers."""
+
+    def _cb(stage_code: str, message: str, domain: str) -> None:
+        try:
+            metrics_db.append_stage(metrics_db.rebalance_id(run_id, 0), leg_index, stage_code, message, domain)
+        except Exception:  # noqa: BLE001 - best-effort, must never break execution
+            log.warning("failed to persist stage %s for %s leg %s", stage_code, run_id, leg_index)
+        if user_cb is not None:
+            user_cb(stage_code, message, domain)
+
+    return _cb
 
 
 class HopValidationError(ValueError):
@@ -261,14 +285,22 @@ def run_single_hop(
     # wallet-to-wallet (see compass_test/cctp_runner.py), same reason a
     # Swap has none (its venue is CoW Swap, not a DEX in the registry).
     connector = None if hop_type == HopType.SWAP or dex_name == "CCTP" else get_connector(dex_name)
-    executed = executor.run_hop(planned, connector, amount, wallet, live, on_stage=on_stage)
+    # Generated before execution, not after (comparator.build_report used to
+    # generate its own) — a live run's stages are persisted AS they stream,
+    # so the id they're tagged with has to exist before executor.run_hop is
+    # even called. journey_index is always 0: run_single_hop is exactly one
+    # journey, one hop.
+    run_id = new_run_id()
+    executed = executor.run_hop(
+        planned, connector, amount, wallet, live, on_stage=_persisting_on_stage(run_id, 0, on_stage)
+    )
 
     hop_comparison = comparator.compare_hop(planned, executed)
     journey_comparison = comparator.compare_journey(
         plan_loader.PlannedJourney(fromDex=dex_name, toDex=dex_name, stable=stable_name, hops=[planned]),
         [hop_comparison],
     )
-    report = comparator.build_report(live=live, journeys=[journey_comparison], unsupported_dexes=[])
+    report = comparator.build_report(live=live, journeys=[journey_comparison], unsupported_dexes=[], run_id=run_id)
     path = reporter.save_report(report)
 
     return HopRunResult(

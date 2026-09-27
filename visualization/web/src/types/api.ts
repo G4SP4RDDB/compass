@@ -155,5 +155,32 @@ export interface ApiErrorBody {
   error?: string;
 }
 
+// GET /api/rebalances and GET /api/rebalances/<id>/legs/<n>/stages — Sentinel's
+// TimescaleDB projection (sentinel.rebalance/rebalance_leg_stage), the
+// "Rebalance History" tab's data source. Distinct from TestRun/ResultJourney
+// above (the JSON-report-backed "Test Results" tab, still the source of
+// truth): this is the durable, queryable replay of what already ran.
+export interface RebalanceSummary {
+  rebalance_id: string;
+  run_id: string;
+  journey_index: number;
+  from_dex: string;
+  to_dex: string;
+  stable: string;
+  status: string;
+  live: boolean;
+  planned_amount_usd: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface LegStage {
+  seq: number;
+  ts: string;
+  stage: string;
+  domain: "onchain" | "exchange" | "";
+  message: string;
+}
+
 // Re-exported so api/client.ts callers don't need a second import for it.
 export type { TestableHopInfo };

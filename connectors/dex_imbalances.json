@@ -5,18 +5,8 @@
     "kind": "surplus",
     "stable": "USDT"
   },
-  "Extended": {
-    "amountUsd": 100.0,
-    "chain": null,
-    "kind": "surplus",
-    "stable": "USDC"
-  },
   "MEXC": {
-    "amountUsd": 100.0,
-    "kind": "deficit"
-  },
-  "Ondo Perps": {
-    "amountUsd": 1.0,
+    "amountUsd": 10.0,
     "kind": "deficit"
   }
 }
