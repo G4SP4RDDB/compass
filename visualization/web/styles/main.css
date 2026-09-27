@@ -397,6 +397,9 @@
   .exec-batch-row.queued { opacity: .55; }
   .exec-batch-row.skipped { opacity: .55; }
   .exec-batch-summary { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 11.5px; font-weight: 600; }
+  .exec-explorer-link { margin-top: 6px; font-size: 11.5px; }
+  .exec-explorer-link a { color: var(--accent); text-decoration: none; }
+  .exec-explorer-link a:hover { text-decoration: underline; }
 
   /* Staged progress for a LIVE run (executor.py's on_stage callback,
      streamed by POST /api/test-hop — see runLiveHop). Each stage is

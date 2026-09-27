@@ -5,6 +5,7 @@ import type { TestableHopInfo, TestHopResult } from "../types/api";
 import { createStageTracker, errorNoteHtml } from "./StageTracker";
 import { ExecModal } from "./ExecModal";
 import { runLiveHopRequest, notifyLiveRunComplete } from "./liveHopRequest";
+import { explorerTxUrl } from "../utils/explorer";
 
 // Shared exec modal instance — a single popup for the whole page, used by
 // this module, execution/liveExecution.ts (onExecuteClick -> showLiveConfirm
@@ -232,6 +233,10 @@ async function runLiveHop(
   execModal.setTitle(status === "ok" ? "Execution complete" : status === "unconfirmed" ? "Not yet confirmed" : "Execution failed");
   renderHopTestResult(resultEl, finalEvent, ctx, tracker.html());
   if (status === "unconfirmed") addRecheckBalanceButton(resultEl, ctx.dex);
+  const explorerUrl = finalEvent.executed.txHash ? explorerTxUrl(ctx.chain, finalEvent.executed.txHash) : null;
+  if (explorerUrl) {
+    execModal.appendBody(`<div class="exec-explorer-link"><a href="${explorerUrl}" target="_blank" rel="noopener noreferrer">View transaction ↗</a></div>`);
+  }
   execModal.finish(status, hopLabel);
 
   notifyLiveRunComplete();

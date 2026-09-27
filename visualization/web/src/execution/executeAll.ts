@@ -4,6 +4,7 @@ import type { ExecutionStatus, TestableHopInfo, TestHopResult } from "../types/a
 import { hopCtxFromButton, hopStablesLabel, hopChainLabel, executeResultEl, renderHopTestResult, addRecheckBalanceButton, execModal } from "./testHop";
 import { createStageTracker, errorNoteHtml } from "./StageTracker";
 import { runLiveHopRequest, notifyLiveRunComplete } from "./liveHopRequest";
+import { explorerTxUrl } from "../utils/explorer";
 
 // "Execute All" only ever reflects rows in #opsList (the flat Chosen
 // Operations list, see panels/operations.ts) — never the per-DEX "Test This
@@ -162,6 +163,11 @@ async function runAllLive(ops: ExecuteAllOp[]): Promise<void> {
     if (status === "ok") { okCount++; moved += row.amount; }
     else if (status === "unconfirmed") { unconfirmedCount++; moved += row.amount; }
     else { failedCount++; if (row.to) failedTo.add(row.to); }
+
+    const explorerUrl = finalEvent.executed.txHash ? explorerTxUrl(row.ctx.chain, finalEvent.executed.txHash) : null;
+    if (explorerUrl) {
+      row.rowEl.insertAdjacentHTML("beforeend", `<div class="exec-explorer-link"><a href="${explorerUrl}" target="_blank" rel="noopener noreferrer">View transaction ↗</a></div>`);
+    }
 
     if (row.resultEl) {
       renderHopTestResult(row.resultEl, finalEvent, row.ctx, tracker.html());
